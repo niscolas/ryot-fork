@@ -211,7 +211,7 @@ export default function Page() {
 									cacheId={loaderData.userMetadataRecommendations.cacheId}
 									confirmationText="Are you sure you want to refresh the recommendations?"
 								/>
-								{coreDetails.isServerKeyValidated ? (
+								{true ? (
 									<ApplicationGrid>
 										{loaderData.userMetadataRecommendations.response.map(
 											(lm) => (

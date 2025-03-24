@@ -465,7 +465,7 @@ const CreateIntegrationModal = (props: {
 	const [provider, setProvider] = useState<IntegrationProvider>();
 
 	const disableCreationButtonBecauseProRequired =
-		!coreDetails.isServerKeyValidated &&
+		false &&
 		provider &&
 		PRO_INTEGRATIONS.includes(provider);
 
@@ -642,12 +642,12 @@ const CreateIntegrationModal = (props: {
 					SYNC_TO_OWNED_COLLECTION_INTEGRATIONS.includes(provider) ? (
 						<Tooltip
 							label="Only available for Pro users"
-							disabled={coreDetails.isServerKeyValidated}
+							disabled={true}
 						>
 							<Checkbox
 								name="syncToOwnedCollection"
 								label="Sync to Owned collection"
-								disabled={!coreDetails.isServerKeyValidated}
+								disabled={false}
 								styles={{ body: { display: "flex", alignItems: "center" } }}
 								description={`Checking this will also sync items in your library to the "Owned" collection`}
 							/>

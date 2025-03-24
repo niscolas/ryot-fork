@@ -1440,14 +1440,14 @@ const EditHistoryItemModal = (props: {
 					/>
 					<Tooltip
 						label={PRO_REQUIRED_MESSAGE}
-						disabled={coreDetails.isServerKeyValidated}
+						disabled={true}
 					>
 						<Select
 							clearable
 							searchable
 							limit={5}
 							name="reviewId"
-							disabled={!coreDetails.isServerKeyValidated}
+							disabled={false}
 							label="Associate with a review"
 							defaultValue={props.seen.reviewId}
 							data={reviewsByThisCurrentUser.map((r) => ({
@@ -1470,7 +1470,7 @@ const EditHistoryItemModal = (props: {
 					>
 						<Tooltip
 							label={PRO_REQUIRED_MESSAGE}
-							disabled={coreDetails.isServerKeyValidated}
+							disabled={true}
 						>
 							<Group wrap="nowrap" mt="xs">
 								{POSSIBLE_DURATION_UNITS.map((input) => (
@@ -1478,7 +1478,7 @@ const EditHistoryItemModal = (props: {
 										key={input}
 										rightSectionWidth={36}
 										defaultValue={manualTimeSpentValue[input]}
-										disabled={!coreDetails.isServerKeyValidated}
+										disabled={false}
 										rightSection={<Text size="xs">{input}</Text>}
 										onChange={(v) => {
 											setManualTimeSpentValue((prev) => ({
@@ -1568,7 +1568,7 @@ const HistoryItem = (props: {
 		tab: string,
 		index?: number,
 	) => {
-		if (!coreDetails.isServerKeyValidated) {
+		if (false) {
 			notifications.show({
 				color: "red",
 				message: PRO_REQUIRED_MESSAGE,

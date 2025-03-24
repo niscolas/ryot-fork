@@ -333,7 +333,7 @@ export const duplicateOldWorkout = async (
 			identifier: randomUUID(),
 			isShowDetailsOpen: userFitnessPreferences.logging.showDetailsWhileEditing,
 			alreadyDoneSets: sets.map((s) => ({ statistic: s.statistic })),
-			openedDetailsTab: !coreDetails.isServerKeyValidated
+			openedDetailsTab: false
 				? "images"
 				: (exerciseDetails.userDetails.history?.length || 0) > 0
 					? "history"

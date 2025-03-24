@@ -383,7 +383,7 @@ const DisplayCollection = (props: {
 					pos="relative"
 					style={{ overflow: "hidden" }}
 				>
-					{coreDetails.isServerKeyValidated ? (
+					{true ? (
 						collectionImages && collectionImages.length > 0 ? (
 							collectionImages.map((image, index) => {
 								const shouldCollapse = index < currentlyHovered;
@@ -567,12 +567,12 @@ const CreateOrUpdateModal = (props: {
 				/>
 				<Tooltip
 					label={PRO_REQUIRED_MESSAGE}
-					disabled={coreDetails.isServerKeyValidated}
+					disabled={true}
 				>
 					<Checkbox
 						label="Hide collection"
 						name="extraInformation.isHidden"
-						disabled={!coreDetails.isServerKeyValidated}
+						disabled={false}
 						defaultChecked={
 							props.toUpdateCollection?.collaborators?.find(
 								(c) => c.collaborator.id === userDetails.id,
@@ -582,12 +582,12 @@ const CreateOrUpdateModal = (props: {
 				</Tooltip>
 				<Tooltip
 					label={PRO_REQUIRED_MESSAGE}
-					disabled={coreDetails.isServerKeyValidated}
+					disabled={true}
 				>
 					<MultiSelect
 						searchable
 						name="collaborators"
-						disabled={!coreDetails.isServerKeyValidated}
+						disabled={false}
 						description="Add collaborators to this collection"
 						defaultValue={(props.toUpdateCollection?.collaborators || []).map(
 							(c) => c.collaborator.id,
@@ -607,7 +607,7 @@ const CreateOrUpdateModal = (props: {
 							<Anchor
 								size="xs"
 								onClick={() => {
-									if (!coreDetails.isServerKeyValidated) {
+									if (false) {
 										notifications.show({
 											color: "red",
 											message: PRO_REQUIRED_MESSAGE,

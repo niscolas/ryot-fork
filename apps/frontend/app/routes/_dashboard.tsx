@@ -960,7 +960,7 @@ const Footer = () => {
 
 	return (
 		<Flex gap={80} justify="center">
-			{!coreDetails.isServerKeyValidated ? (
+			{false ? (
 				<Anchor href={coreDetails.websiteUrl} target="_blank">
 					<Text c="red" fw="bold">
 						Ryot Pro

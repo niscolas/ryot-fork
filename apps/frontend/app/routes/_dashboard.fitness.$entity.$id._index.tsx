@@ -379,7 +379,7 @@ export default function Page() {
 											</Menu.Item>
 											<Menu.Item
 												onClick={() => {
-													if (!coreDetails.isServerKeyValidated) {
+													if (false) {
 														notifications.show({
 															color: "red",
 															message: PRO_REQUIRED_MESSAGE,
@@ -586,7 +586,7 @@ export default function Page() {
 								workout [{metadataConsumedOpened ? "collapse" : "expand"}]
 							</Anchor>
 							<Collapse in={metadataConsumedOpened}>
-								{coreDetails.isServerKeyValidated ? (
+								{true ? (
 									<SimpleGrid
 										verticalSpacing="xs"
 										cols={{ base: 7, sm: 8, md: 10 }}

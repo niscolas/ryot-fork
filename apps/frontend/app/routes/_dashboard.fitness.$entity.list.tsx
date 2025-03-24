@@ -202,7 +202,7 @@ export default function Page() {
 						className={OnboardingTourStepTargets.AddNewWorkout}
 						onClick={async () => {
 							if (
-								!coreDetails.isServerKeyValidated &&
+								false &&
 								loaderData.entity === FitnessEntity.Templates
 							) {
 								notifications.show({

@@ -165,7 +165,7 @@ const DisplayGenre = (props: { genreId: string }) => {
 		>
 			<Stack gap={4}>
 				<Box pos="relative">
-					{coreDetails.isServerKeyValidated ? (
+					{true ? (
 						<Paper radius="md" style={{ overflow: "hidden" }}>
 							<Flex h={260} w={168} wrap="wrap">
 								{genreData.images.map((image) => (

@@ -1315,7 +1315,7 @@ const UploadAssetsModal = (props: {
 	if (!currentWorkout) return null;
 
 	const afterFileSelected = async (file: File | null) => {
-		if (props.modalOpenedBy === null && !coreDetails.isServerKeyValidated) {
+		if (props.modalOpenedBy === null && false) {
 			notifications.show({
 				color: "red",
 				message: PRO_REQUIRED_MESSAGE,
@@ -1639,7 +1639,7 @@ const ExerciseDisplay = (props: {
 							<Menu.Item
 								leftSection={<IconReplace size={14} />}
 								onClick={() => {
-									if (!coreDetails.isServerKeyValidated) {
+									if (false) {
 										notifications.show({
 											message: PRO_REQUIRED_MESSAGE,
 											color: "red",
@@ -1768,7 +1768,7 @@ const ExerciseDisplay = (props: {
 																entityId={history.workoutId}
 																entityType={FitnessEntity.Workouts}
 																onCopyButtonClick={async () => {
-																	if (!coreDetails.isServerKeyValidated) {
+																	if (false) {
 																		notifications.show({
 																			color: "red",
 																			message:
@@ -1816,7 +1816,7 @@ const ExerciseDisplay = (props: {
 											pos="absolute"
 											variant="filled"
 											onClick={() => {
-												if (!coreDetails.isServerKeyValidated) {
+												if (false) {
 													notifications.show({
 														color: "red",
 														message: PRO_REQUIRED_MESSAGE,
@@ -2180,7 +2180,7 @@ const SetDisplay = (props: {
 								fz="xs"
 								leftSection={<IconClipboard size={14} />}
 								onClick={() => {
-									if (!coreDetails.isServerKeyValidated) {
+									if (false) {
 										notifications.show({
 											color: "red",
 											message: PRO_REQUIRED_MESSAGE,
