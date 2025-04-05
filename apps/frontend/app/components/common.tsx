@@ -575,7 +575,7 @@ export const CollectionsFilter = (props: {
 						<Group key={f.id} justify="space-between" wrap="nowrap">
 							{idx !== 0 ? (
 								<Text size="xs" c="dimmed">
-									OR
+									AND
 								</Text>
 							) : null}
 							<Select
@@ -607,7 +607,7 @@ export const CollectionsFilter = (props: {
 									filtersHandlers.setItem(
 										idx,
 										produce(f, (d) => {
-											d.collectionId = v || "";
+											d.collectionId = v && "";
 										}),
 									)
 								}
