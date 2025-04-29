@@ -558,8 +558,7 @@ export const CollectionsFilter = (props: {
 	>((props.applied || []).map((a) => ({ ...a, id: randomId() })));
 
 	useDidUpdate(() => {
-		const applicableFilters = filters
-			;
+		const applicableFilters = filters;
 		const final = applicableFilters
 			.filter((f) => f.collectionId)
 			.map((a) => `${a.collectionId}:${a.presence}`)
