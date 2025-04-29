@@ -20,8 +20,8 @@ import {
 	List,
 	Loader,
 	Modal,
+	MultiSelect,
 	NumberInput,
-	Paper,
 	Rating,
 	ScrollArea,
 	SegmentedControl,
@@ -29,6 +29,7 @@ import {
 	SimpleGrid,
 	Slider,
 	Stack,
+	Switch,
 	Text,
 	TextInput,
 	Textarea,
@@ -41,18 +42,22 @@ import {
 	useMantineTheme,
 } from "@mantine/core";
 import { DateInput, DatePickerInput, DateTimePicker } from "@mantine/dates";
-import { upperFirst, useCounter, useDisclosure } from "@mantine/hooks";
+import { upperFirst, useDisclosure, useListState } from "@mantine/hooks";
+import { notifications } from "@mantine/notifications";
 import {
 	CollectionExtraInformationLot,
+	CreateUserMeasurementDocument,
 	EntityLot,
 	MediaLot,
 	type MetadataDetailsQuery,
 	type UserCollectionsListQuery,
 	UserLot,
+	type UserMeasurementInput,
 	type UserMetadataDetailsQuery,
 	UserReviewScale,
 	Visibility,
 } from "@ryot/generated/graphql/backend/graphql";
+import { AddEntityToCollectionDocument } from "@ryot/generated/graphql/backend/graphql";
 import {
 	changeCase,
 	formatDateToNaiveDate,
@@ -65,7 +70,6 @@ import {
 	IconBook,
 	IconBrandPagekit,
 	IconCalendar,
-	IconCancel,
 	IconChevronLeft,
 	IconChevronRight,
 	IconChevronsLeft,
@@ -86,7 +90,7 @@ import {
 	IconStretching,
 	IconSun,
 } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { produce } from "immer";
 import Cookies from "js-cookie";
@@ -114,11 +118,12 @@ import {
 	LOGO_IMAGE_URL,
 	ThreePointSmileyRating,
 	Verb,
+	clientGqlService,
 	convertDecimalToThreePointSmiley,
 	forcedDashboardPath,
 	getMetadataDetailsQuery,
 	getVerb,
-	refreshUserMetadataDetails,
+	refreshEntityDetails,
 } from "~/lib/common";
 import {
 	useApplicationEvents,
@@ -132,7 +137,6 @@ import {
 	useUserMetadataDetails,
 	useUserPreferences,
 } from "~/lib/hooks";
-import { useBulkEditCollection } from "~/lib/state/collection";
 import { useMeasurementsDrawerOpen } from "~/lib/state/fitness";
 import {
 	OnboardingTourStepTargets,
@@ -141,7 +145,7 @@ import {
 } from "~/lib/state/general";
 import {
 	type UpdateProgressData,
-	useAddEntityToCollection,
+	useAddEntityToCollections,
 	useMetadataProgressUpdate,
 	useReviewEntity,
 } from "~/lib/state/media";
@@ -305,14 +309,13 @@ export default function Layout() {
 	const closeMetadataProgressUpdateModal = () => setMetadataToUpdate(null);
 	const [entityToReview, setEntityToReview] = useReviewEntity();
 	const closeReviewEntityModal = () => setEntityToReview(null);
-	const [addEntityToCollectionData, setAddEntityToCollectionData] =
-		useAddEntityToCollection();
-	const closeAddEntityToCollectionModal = () =>
-		setAddEntityToCollectionData(null);
+	const [addEntityToCollectionsData, setAddEntityToCollectionsData] =
+		useAddEntityToCollections();
+	const closeAddEntityToCollectionsModal = () =>
+		setAddEntityToCollectionsData(null);
 	const [measurementsDrawerOpen, setMeasurementsDrawerOpen] =
 		useMeasurementsDrawerOpen();
 	const closeMeasurementsDrawer = () => setMeasurementsDrawerOpen(false);
-	const bulkEditingCollection = useBulkEditCollection();
 	const {
 		onboardingTourSteps,
 		completeOnboardingTour,
@@ -352,21 +355,6 @@ export default function Layout() {
 			: undefined,
 	].filter((link) => link !== undefined);
 	const Icon = loaderData.currentColorScheme === "dark" ? IconSun : IconMoon;
-	const bulkEditingCollectionState = bulkEditingCollection.state;
-	const shouldShowBulkEditingAffix =
-		bulkEditingCollectionState &&
-		(bulkEditingCollectionState.data.action === "remove"
-			? location.pathname ===
-				$path("/collections/:id", {
-					id: bulkEditingCollectionState.data.collection.id,
-				})
-			: [
-					...Object.values(MediaLot).map((ml) =>
-						$path("/media/:action/:lot", { action: "list", lot: ml }),
-					),
-					$path("/media/people/:action", { action: "list" }),
-					$path("/media/groups/:action", { action: "list" }),
-				].includes(location.pathname));
 	const fitnessLinks = [
 		...(Object.entries(userPreferences.featuresEnabled.fitness || {})
 			.filter(([v, _]) => !["enabled"].includes(v))
@@ -468,90 +456,6 @@ export default function Layout() {
 					</Affix>
 				</Tooltip>
 			) : null}
-			{shouldShowBulkEditingAffix ? (
-				<Affix position={{ bottom: rem(30) }} w="100%" px="sm">
-					<Form
-						method="POST"
-						action={$path("/actions", { intent: "bulkCollectionAction" })}
-						onSubmit={(e) => {
-							submit(e);
-							bulkEditingCollectionState.stop(true);
-						}}
-					>
-						<input
-							type="hidden"
-							name="action"
-							defaultValue={bulkEditingCollectionState.data.action}
-						/>
-						<input
-							type="hidden"
-							name="collectionName"
-							defaultValue={bulkEditingCollectionState.data.collection.name}
-						/>
-						<input
-							type="hidden"
-							name="creatorUserId"
-							defaultValue={
-								bulkEditingCollectionState.data.collection.creatorUserId
-							}
-						/>
-						{bulkEditingCollectionState.data.entities.map((item, index) => (
-							<Fragment key={JSON.stringify(item)}>
-								<input
-									readOnly
-									type="hidden"
-									value={item.entityId}
-									name={`items[${index}].entityId`}
-								/>
-								<input
-									readOnly
-									type="hidden"
-									value={item.entityLot}
-									name={`items[${index}].entityLot`}
-								/>
-							</Fragment>
-						))}
-						<Paper withBorder shadow="xl" p="md" w={{ md: "40%" }} mx="auto">
-							<Group wrap="nowrap" justify="space-between">
-								<Text fz={{ base: "xs", md: "md" }}>
-									{bulkEditingCollectionState.data.entities.length} items
-									selected
-								</Text>
-								<Group wrap="nowrap">
-									<ActionIcon
-										size="md"
-										onClick={() => bulkEditingCollectionState.stop()}
-									>
-										<IconCancel />
-									</ActionIcon>
-									<Button
-										size="xs"
-										color="blue"
-										loading={bulkEditingCollectionState.data.isLoading}
-										onClick={() => bulkEditingCollectionState.bulkAdd()}
-									>
-										Select all items
-									</Button>
-									<Button
-										size="xs"
-										type="submit"
-										disabled={
-											bulkEditingCollectionState.data.entities.length === 0
-										}
-										color={
-											bulkEditingCollectionState.data.action === "remove"
-												? "red"
-												: "green"
-										}
-									>
-										{changeCase(bulkEditingCollectionState.data.action)}
-									</Button>
-								</Group>
-							</Group>
-						</Paper>
-					</Form>
-				</Affix>
-			) : null}
 			<Modal
 				centered
 				withCloseButton={false}
@@ -588,17 +492,18 @@ export default function Layout() {
 				withCloseButton={false}
 				opened={entityToReview !== null}
 				onClose={() => setEntityToReview(null)}
+				title={`Reviewing "${entityToReview?.entityTitle}"`}
 			>
 				<ReviewEntityForm closeReviewEntityModal={closeReviewEntityModal} />
 			</Modal>
 			<Modal
 				centered
 				withCloseButton={false}
-				onClose={closeAddEntityToCollectionModal}
-				opened={addEntityToCollectionData !== null}
+				onClose={closeAddEntityToCollectionsModal}
+				opened={addEntityToCollectionsData !== null}
 			>
-				<AddEntityToCollectionForm
-					closeAddEntityToCollectionModal={closeAddEntityToCollectionModal}
+				<AddEntityToCollectionsForm
+					closeAddEntityToCollectionsModal={closeAddEntityToCollectionsModal}
 				/>
 			</Modal>
 			<Drawer
@@ -1018,7 +923,7 @@ const MetadataProgressUpdateForm = ({
 		submit(e);
 		const metadataId = metadataToUpdate.metadataId;
 		events.updateProgress(metadataDetails.title);
-		refreshUserMetadataDetails(metadataId);
+		refreshEntityDetails(metadataId);
 		closeMetadataProgressUpdateModal();
 	};
 
@@ -1409,10 +1314,8 @@ const MetadataNewProgressUpdateForm = ({
 					type="submit"
 					variant="outline"
 					disabled={selectedDate === undefined}
+					onClick={() => advanceOnboardingTourStep()}
 					className={OnboardingTourStepTargets.AddMovieToWatchedHistory}
-					onClick={async () => {
-						await advanceOnboardingTourStep();
-					}}
 				>
 					Submit
 				</Button>
@@ -1488,7 +1391,7 @@ const ReviewEntityForm = ({
 			action={withQuery("/actions", { intent: "performReviewAction" })}
 			onSubmit={(e) => {
 				submit(e);
-				refreshUserMetadataDetails(entityToReview.entityId);
+				refreshEntityDetails(entityToReview.entityId);
 				events.postReview(entityToReview.entityTitle);
 				closeReviewEntityModal();
 			}}
@@ -1544,6 +1447,28 @@ const ReviewEntityForm = ({
 								name="rating"
 								label="Rating"
 								rightSection={<IconPercentage size={16} />}
+								defaultValue={
+									entityToReview.existingReview?.rating
+										? Number(entityToReview.existingReview.rating)
+										: undefined
+								}
+							/>
+						))
+						.with(UserReviewScale.OutOfTen, () => (
+							<NumberInput
+								w="40%"
+								min={0}
+								max={10}
+								step={0.1}
+								hideControls
+								name="rating"
+								label="Rating"
+								rightSectionWidth={rem(60)}
+								rightSection={
+									<Text size="xs" c="dimmed">
+										Out of 10
+									</Text>
+								}
 								defaultValue={
 									entityToReview.existingReview?.rating
 										? Number(entityToReview.existingReview.rating)
@@ -1710,22 +1635,21 @@ const ReviewEntityForm = ({
 type Collection =
 	UserCollectionsListQuery["userCollectionsList"]["response"][number];
 
-const AddEntityToCollectionForm = ({
-	closeAddEntityToCollectionModal,
+const AddEntityToCollectionsForm = ({
+	closeAddEntityToCollectionsModal,
 }: {
-	closeAddEntityToCollectionModal: () => void;
+	closeAddEntityToCollectionsModal: () => void;
 }) => {
 	const userDetails = useUserDetails();
 	const collections = useNonHiddenUserCollections();
 	const events = useApplicationEvents();
-	const submit = useConfirmSubmit();
-	const [selectedCollection, setSelectedCollection] =
-		useState<Collection | null>(null);
-	const [ownedOn, setOwnedOn] = useState<Date | null>();
-	const [addEntityToCollectionData, _] = useAddEntityToCollection();
-	const [numArrayElements, setNumArrayElements] = useCounter(1);
+	const revalidator = useRevalidator();
+	const [addEntityToCollectionData] = useAddEntityToCollections();
 
-	if (!addEntityToCollectionData) return null;
+	const [selectedCollections, selectedCollectionsHandlers] = useListState<
+		// biome-ignore lint/suspicious/noExplicitAny: required here
+		Collection & { userExtraInformationData: any }
+	>([]);
 
 	const selectData = Object.entries(
 		groupBy(collections, (c) =>
@@ -1736,179 +1660,277 @@ const AddEntityToCollectionForm = ({
 		items: items.map((c) => ({
 			label: c.name,
 			value: c.id.toString(),
-			disabled: addEntityToCollectionData.alreadyInCollections?.includes(
+			disabled: addEntityToCollectionData?.alreadyInCollections?.includes(
 				c.id.toString(),
 			),
 		})),
 	}));
 
+	const mutation = useMutation({
+		mutationFn: async () => {
+			if (!addEntityToCollectionData) return [];
+			const payload = selectedCollections.map((col) => ({
+				entityId: addEntityToCollectionData.entityId,
+				entityLot: addEntityToCollectionData.entityLot,
+				collectionName: col.name,
+				creatorUserId: col.creator.id,
+				information: col.userExtraInformationData,
+			}));
+			return Promise.all(
+				payload.map((item) =>
+					clientGqlService.request(AddEntityToCollectionDocument, {
+						input: item,
+					}),
+				),
+			);
+		},
+	});
+
+	if (!addEntityToCollectionData) return null;
+
+	const handleCollectionChange = (ids: string[]) => {
+		for (const id of ids) {
+			if (!selectedCollections.some((c) => c.id === id)) {
+				const col = collections.find((c) => c.id === id);
+				if (col)
+					selectedCollectionsHandlers.append({
+						...col,
+						userExtraInformationData: {},
+					});
+			}
+		}
+		for (let i = selectedCollections.length - 1; i >= 0; i--) {
+			if (!ids.includes(selectedCollections[i].id))
+				selectedCollectionsHandlers.remove(i);
+		}
+	};
+
+	const handleCustomFieldChange = (
+		colId: string,
+		field: string,
+		value: unknown,
+	) => {
+		const idx = selectedCollections.findIndex((c) => c.id === colId);
+		if (idx !== -1) {
+			selectedCollectionsHandlers.setItemProp(idx, "userExtraInformationData", {
+				...selectedCollections[idx].userExtraInformationData,
+				[field]: value,
+			});
+		}
+	};
+
+	const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+		e.preventDefault();
+		await mutation.mutateAsync();
+		refreshEntityDetails(addEntityToCollectionData.entityId);
+		revalidator.revalidate();
+		closeAddEntityToCollectionsModal();
+		events.addToCollection(addEntityToCollectionData.entityLot);
+	};
+
 	return (
-		<Form
-			method="POST"
-			onSubmit={(e) => {
-				submit(e);
-				refreshUserMetadataDetails(addEntityToCollectionData.entityId);
-				closeAddEntityToCollectionModal();
-			}}
-			action={withQuery("/actions", { intent: "addEntityToCollection" })}
-		>
-			<input
-				hidden
-				readOnly
-				name="entityId"
-				value={addEntityToCollectionData.entityId}
-			/>
-			<input
-				hidden
-				readOnly
-				name="entityLot"
-				value={addEntityToCollectionData.entityLot}
-			/>
+		<Form onSubmit={handleSubmit}>
 			<Stack>
-				<Title order={3}>Select collection</Title>
-				<Select
+				<Title order={3}>Select collections</Title>
+				<MultiSelect
 					searchable
 					data={selectData}
 					nothingFoundMessage="Nothing found..."
-					value={selectedCollection?.id.toString()}
-					onChange={(v) => {
-						if (v) {
-							const collection = collections.find((c) => c.id === v);
-							if (collection) setSelectedCollection(collection);
-						}
-					}}
+					onChange={(v) => handleCollectionChange(v)}
+					value={selectedCollections.map((c) => c.id)}
 				/>
-				{selectedCollection ? (
-					<>
-						<input
-							hidden
-							readOnly
-							name="collectionName"
-							value={selectedCollection.name}
-						/>
-						<input
-							hidden
-							readOnly
-							name="creatorUserId"
-							value={selectedCollection.creator.id}
-						/>
+				{selectedCollections.map((selectedCollection) => (
+					<Fragment key={selectedCollection.id}>
 						{selectedCollection.informationTemplate?.map((template) => (
 							<Fragment key={template.name}>
 								{match(template.lot)
 									.with(CollectionExtraInformationLot.String, () => (
 										<TextInput
-											name={`information.${template.name}`}
 											label={template.name}
-											description={template.description}
 											required={!!template.required}
-											defaultValue={template.defaultValue || undefined}
+											description={template.description}
+											value={
+												selectedCollection.userExtraInformationData[
+													template.name
+												] || ""
+											}
+											onChange={(e) =>
+												handleCustomFieldChange(
+													selectedCollection.id,
+													template.name,
+													e.currentTarget.value,
+												)
+											}
+										/>
+									))
+									.with(CollectionExtraInformationLot.Boolean, () => (
+										<Switch
+											label={template.name}
+											required={!!template.required}
+											description={template.description}
+											checked={
+												selectedCollection.userExtraInformationData[
+													template.name
+												] === "true"
+											}
+											onChange={(e) =>
+												handleCustomFieldChange(
+													selectedCollection.id,
+													template.name,
+													e.currentTarget.checked ? "true" : "false",
+												)
+											}
 										/>
 									))
 									.with(CollectionExtraInformationLot.Number, () => (
 										<NumberInput
-											name={`information.${template.name}`}
 											label={template.name}
-											description={template.description}
 											required={!!template.required}
-											defaultValue={
-												template.defaultValue
-													? Number(template.defaultValue)
-													: undefined
+											description={template.description}
+											value={
+												selectedCollection.userExtraInformationData[
+													template.name
+												] || ""
+											}
+											onChange={(v) =>
+												handleCustomFieldChange(
+													selectedCollection.id,
+													template.name,
+													v,
+												)
 											}
 										/>
 									))
 									.with(CollectionExtraInformationLot.Date, () => (
-										<>
-											<DateInput
-												label={template.name}
-												description={template.description}
-												required={!!template.required}
-												onChange={setOwnedOn}
-												value={ownedOn}
-												defaultValue={
-													template.defaultValue
-														? new Date(template.defaultValue)
-														: undefined
-												}
-											/>
-											{ownedOn ? (
-												<input
-													hidden
-													readOnly
-													name={`information.${template.name}`}
-													value={formatDateToNaiveDate(ownedOn)}
-												/>
-											) : null}
-										</>
+										<DateInput
+											label={template.name}
+											required={!!template.required}
+											description={template.description}
+											value={
+												selectedCollection.userExtraInformationData[
+													template.name
+												] || null
+											}
+											onChange={(v) =>
+												handleCustomFieldChange(
+													selectedCollection.id,
+													template.name,
+													v,
+												)
+											}
+										/>
 									))
 									.with(CollectionExtraInformationLot.DateTime, () => (
 										<DateTimePicker
-											name={`information.${template.name}`}
 											label={template.name}
-											description={template.description}
 											required={!!template.required}
+											description={template.description}
+											value={
+												selectedCollection.userExtraInformationData[
+													template.name
+												] || null
+											}
+											onChange={(v) =>
+												handleCustomFieldChange(
+													selectedCollection.id,
+													template.name,
+													v,
+												)
+											}
 										/>
 									))
 									.with(CollectionExtraInformationLot.StringArray, () => (
 										<Input.Wrapper
 											label={template.name}
-											description={
-												<>
-													{template.description}
-													<Anchor
-														ml={4}
-														size="xs"
-														onClick={() => setNumArrayElements.increment()}
-													>
-														Add more
-													</Anchor>
-												</>
-											}
 											required={!!template.required}
+											description={template.description}
 										>
 											<Stack gap="xs" mt={4}>
-												{Array.from({ length: numArrayElements }).map(
-													(_, i) => (
-														<Group key={i.toString()}>
-															<TextInput
-																name={`information.${template.name}[${i}]`}
-																flex={1}
-																defaultValue={
-																	template.defaultValue || undefined
-																}
-															/>
-															<Anchor
-																ml="auto"
-																size="xs"
-																onClick={() => setNumArrayElements.decrement()}
-															>
-																Remove
-															</Anchor>
-														</Group>
-													),
-												)}
+												{(
+													selectedCollection.userExtraInformationData[
+														template.name
+													] || [""]
+												).map((val: string, i: number) => (
+													<Group key={i.toString()}>
+														<TextInput
+															flex={1}
+															value={val}
+															onChange={(e) => {
+																const arr = [
+																	...(selectedCollection
+																		.userExtraInformationData[
+																		template.name
+																	] || [""]),
+																];
+																arr[i] = e.currentTarget.value;
+																handleCustomFieldChange(
+																	selectedCollection.id,
+																	template.name,
+																	arr,
+																);
+															}}
+														/>
+														<Anchor
+															ml="auto"
+															size="xs"
+															onClick={() => {
+																const arr = [
+																	...(selectedCollection
+																		.userExtraInformationData[
+																		template.name
+																	] || [""]),
+																];
+																arr.splice(i, 1);
+																handleCustomFieldChange(
+																	selectedCollection.id,
+																	template.name,
+																	arr,
+																);
+															}}
+														>
+															Remove
+														</Anchor>
+													</Group>
+												))}
+												<Anchor
+													ml={4}
+													size="xs"
+													onClick={() => {
+														const arr = [
+															...(selectedCollection.userExtraInformationData[
+																template.name
+															] || [""]),
+														];
+														arr.push("");
+														handleCustomFieldChange(
+															selectedCollection.id,
+															template.name,
+															arr,
+														);
+													}}
+												>
+													Add more
+												</Anchor>
 											</Stack>
 										</Input.Wrapper>
 									))
 									.exhaustive()}
 							</Fragment>
 						))}
-					</>
-				) : null}
+					</Fragment>
+				))}
 				<Button
-					disabled={!selectedCollection}
-					variant="outline"
 					type="submit"
-					onClick={() =>
-						events.addToCollection(addEntityToCollectionData.entityLot)
-					}
+					variant="outline"
+					loading={mutation.isPending}
+					disabled={selectedCollections.length === 0 || mutation.isPending}
 				>
 					Set
 				</Button>
 				<Button
-					variant="outline"
 					color="red"
-					onClick={closeAddEntityToCollectionModal}
+					variant="outline"
+					onClick={closeAddEntityToCollectionsModal}
 				>
 					Cancel
 				</Button>
@@ -1920,56 +1942,114 @@ const AddEntityToCollectionForm = ({
 const CreateMeasurementForm = (props: {
 	closeMeasurementModal: () => void;
 }) => {
-	const userPreferences = useUserPreferences();
+	const revalidator = useRevalidator();
 	const events = useApplicationEvents();
-	const submit = useConfirmSubmit();
+	const userPreferences = useUserPreferences();
+
+	const [input, setInput] = useState<UserMeasurementInput>({
+		name: "",
+		comment: "",
+		timestamp: new Date().toISOString(),
+		information: {
+			statistics: [],
+			assets: {
+				s3Images: [],
+				s3Videos: [],
+				remoteVideos: [],
+				remoteImages: [],
+			},
+		},
+	});
+
+	const createMeasurementMutation = useMutation({
+		mutationFn: () =>
+			clientGqlService.request(CreateUserMeasurementDocument, { input }),
+	});
 
 	return (
-		<Form
-			replace
-			method="POST"
-			action={withQuery($path("/actions"), { intent: "createMeasurement" })}
-			onSubmit={(e) => {
-				submit(e);
-				events.createMeasurement();
-				props.closeMeasurementModal();
-			}}
-		>
-			<Stack>
-				<DateTimePicker
-					label="Timestamp"
-					defaultValue={new Date()}
-					name="timestamp"
-					required
-				/>
-				<TextInput label="Name" name="name" />
-				<SimpleGrid cols={2} style={{ alignItems: "end" }}>
-					{Object.keys(userPreferences.fitness.measurements.inbuilt)
-						.filter((n) => n !== "custom")
-						.filter(
-							(n) =>
-								// biome-ignore lint/suspicious/noExplicitAny: required
-								(userPreferences as any).fitness.measurements.inbuilt[n],
-						)
-						.map((v) => (
-							<NumberInput
-								decimalScale={3}
-								key={v}
-								label={changeCase(snakeCase(v))}
-								name={`stats.${v}`}
-							/>
-						))}
-					{userPreferences.fitness.measurements.custom.map(({ name }) => (
-						<NumberInput
-							key={name}
-							label={changeCase(snakeCase(name))}
-							name={`stats.custom.${name}`}
-						/>
-					))}
-				</SimpleGrid>
-				<Textarea label="Comment" name="comment" />
-				<Button type="submit">Submit</Button>
-			</Stack>
-		</Form>
+		<Stack>
+			<DateTimePicker
+				required
+				label="Timestamp"
+				value={new Date(input.timestamp)}
+				onChange={(v) =>
+					setInput(
+						produce(input, (draft) => {
+							draft.timestamp = v?.toISOString() ?? new Date().toISOString();
+						}),
+					)
+				}
+			/>
+			<TextInput
+				label="Name"
+				value={input.name ?? ""}
+				onChange={(e) =>
+					setInput(
+						produce(input, (draft) => {
+							draft.name = e.target.value;
+						}),
+					)
+				}
+			/>
+			<SimpleGrid cols={2} style={{ alignItems: "end" }}>
+				{userPreferences.fitness.measurements.statistics.map(({ name }) => (
+					<NumberInput
+						key={name}
+						decimalScale={3}
+						label={changeCase(snakeCase(name))}
+						value={
+							input.information.statistics.find((s) => s.name === name)?.value
+						}
+						onChange={(v) => {
+							setInput(
+								produce(input, (draft) => {
+									const idx = draft.information.statistics.findIndex(
+										(s) => s.name === name,
+									);
+									if (idx !== -1) {
+										draft.information.statistics[idx].value = v.toString();
+									} else {
+										draft.information.statistics.push({
+											name,
+											value: v.toString(),
+										});
+									}
+								}),
+							);
+						}}
+					/>
+				))}
+			</SimpleGrid>
+			<Textarea
+				label="Comment"
+				value={input.comment ?? ""}
+				onChange={(e) =>
+					setInput(
+						produce(input, (draft) => {
+							draft.comment = e.target.value;
+						}),
+					)
+				}
+			/>
+			<Button
+				loading={createMeasurementMutation.isPending}
+				disabled={
+					createMeasurementMutation.isPending ||
+					!input.information.statistics.some((s) => s.value)
+				}
+				onClick={async () => {
+					events.createMeasurement();
+					await createMeasurementMutation.mutateAsync();
+					revalidator.revalidate();
+					notifications.show({
+						color: "green",
+						message: "Your measurement has been created",
+					});
+					props.closeMeasurementModal();
+				}}
+			>
+				Submit
+			</Button>
+		</Stack>
 	);
 };

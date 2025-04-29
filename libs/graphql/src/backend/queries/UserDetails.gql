@@ -16,6 +16,7 @@ query UserDetails {
 					gridPacking
 					displayNsfw
 					landingPath
+					listPageSize
 					disableVideos
 					persistQueries
 					disableReviews
@@ -45,37 +46,11 @@ query UserDetails {
 						muteSounds
 						caloriesBurntUnit
 						promptForRestTimer
-						showDetailsWhileEditing
 					}
 					measurements {
-						custom {
+						statistics {
 							name
-							dataType
-						}
-						inbuilt {
-							weight
-							bodyMassIndex
-							totalBodyWater
-							muscle
-							leanBodyMass
-							bodyFat
-							boneMass
-							visceralFat
-							waistCircumference
-							waistToHeightRatio
-							hipCircumference
-							waistToHipRatio
-							chestCircumference
-							thighCircumference
-							bicepsCircumference
-							neckCircumference
-							bodyFatCaliper
-							chestSkinfold
-							abdominalSkinfold
-							thighSkinfold
-							basalMetabolicRate
-							totalDailyEnergyExpenditure
-							calories
+							unit
 						}
 					}
 				}

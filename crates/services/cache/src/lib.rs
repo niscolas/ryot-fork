@@ -31,7 +31,7 @@ impl CacheService {
 impl CacheService {
     fn get_expiry_for_key(&self, key: &ApplicationCacheKey) -> i64 {
         match key {
-            ApplicationCacheKey::CoreDetails
+            ApplicationCacheKey::CoreDetails { .. }
             | ApplicationCacheKey::PeopleSearch { .. }
             | ApplicationCacheKey::UserAnalytics { .. }
             | ApplicationCacheKey::UserPeopleList { .. }
@@ -46,19 +46,21 @@ impl CacheService {
             | ApplicationCacheKey::MetadataRecentlyConsumed { .. }
             | ApplicationCacheKey::UserMetadataRecommendations { .. } => 1,
 
-            ApplicationCacheKey::UserCollectionsList { .. }
-            | ApplicationCacheKey::UserAnalyticsParameters { .. } => 8,
-
             ApplicationCacheKey::ProgressUpdateCache { .. } => {
                 self.config.server.progress_update_threshold
             }
 
-            ApplicationCacheKey::YoutubeMusicSongListened { .. }
-            | ApplicationCacheKey::UserMetadataRecommendationsSet { .. } => 24,
+            ApplicationCacheKey::UserCollectionsList { .. }
+            | ApplicationCacheKey::UserAnalyticsParameters { .. } => 8,
 
-            ApplicationCacheKey::IgdbSettings
-            | ApplicationCacheKey::TmdbSettings
-            | ApplicationCacheKey::ListennotesSettings => 120,
+            ApplicationCacheKey::TrendingMetadataIds { .. }
+            | ApplicationCacheKey::YoutubeMusicSongListened { .. }
+            | ApplicationCacheKey::UserMetadataRecommendationsSet { .. }
+            | ApplicationCacheKey::CollectionRecommendations { .. } => 24,
+
+            ApplicationCacheKey::IgdbSettings { .. }
+            | ApplicationCacheKey::TmdbSettings { .. }
+            | ApplicationCacheKey::ListennotesSettings { .. } => 120,
         }
     }
 
@@ -174,7 +176,7 @@ impl CacheService {
         Some((value.id, db_value))
     }
 
-    pub async fn expire_key(&self, by: ExpireCacheKeyInput) -> Result<bool> {
+    pub async fn expire_key(&self, by: ExpireCacheKeyInput) -> Result<()> {
         let deleted = ApplicationCache::update_many()
             .filter(match by {
                 ExpireCacheKeyInput::ById(id) => application_cache::Column::Id.eq(id),
@@ -193,6 +195,7 @@ impl CacheService {
             })
             .exec(&self.db)
             .await?;
-        Ok(deleted.rows_affected > 0)
+        ryot_log!(debug, "Expired application cache: {deleted:?}");
+        Ok(())
     }
 }

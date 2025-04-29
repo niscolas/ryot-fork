@@ -5,7 +5,7 @@ use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use async_graphql::{Error, Result};
 use chrono::Utc;
 use common_models::{DefaultCollection, StringIdObject, UserLevelCacheKey};
-use common_utils::ryot_log;
+use common_utils::{MEDIA_SOURCES_WITHOUT_RECOMMENDATIONS, ryot_log};
 use database_models::{
     access_link, integration, metadata, metadata_to_metadata, notification_platform,
     prelude::{AccessLink, Integration, Metadata, MetadataToMetadata, NotificationPlatform, User},
@@ -20,23 +20,23 @@ use dependent_models::{
     UserDetailsResult, UserMetadataRecommendationsResponse,
 };
 use dependent_utils::{
-    create_or_update_collection, create_partial_metadata, get_metadata_provider,
+    create_or_update_collection, generic_metadata, update_metadata_and_notify_users,
 };
 use enum_meta::Meta;
 use enum_models::{
-    IntegrationLot, IntegrationProvider, MediaLot, MediaSource, MetadataToMetadataRelation,
-    NotificationPlatformLot, UserLot, UserNotificationContent,
+    IntegrationLot, IntegrationProvider, MetadataToMetadataRelation, NotificationPlatformLot,
+    UserLot, UserNotificationContent,
 };
 use itertools::Itertools;
 use jwt_service::sign;
 use media_models::{
     AuthUserInput, CreateAccessLinkInput, CreateOrUpdateCollectionInput,
-    CreateUserIntegrationInput, CreateUserNotificationPlatformInput, LoginError, LoginErrorVariant,
-    LoginResponse, LoginResult, OidcTokenOutput, PasswordUserInput, ProcessAccessLinkError,
-    ProcessAccessLinkErrorVariant, ProcessAccessLinkInput, ProcessAccessLinkResponse,
-    ProcessAccessLinkResult, RegisterError, RegisterErrorVariant, RegisterResult,
-    RegisterUserInput, UpdateUserIntegrationInput, UpdateUserNotificationPlatformInput,
-    UserDetailsError, UserDetailsErrorVariant,
+    CreateOrUpdateUserIntegrationInput, CreateUserNotificationPlatformInput, LoginError,
+    LoginErrorVariant, LoginResponse, LoginResult, OidcTokenOutput, PasswordUserInput,
+    ProcessAccessLinkError, ProcessAccessLinkErrorVariant, ProcessAccessLinkInput,
+    ProcessAccessLinkResponse, ProcessAccessLinkResult, RegisterError, RegisterErrorVariant,
+    RegisterResult, RegisterUserInput, UpdateUserNotificationPlatformInput, UserDetailsError,
+    UserDetailsErrorVariant,
 };
 use nanoid::nanoid;
 use notification_service::send_notification;
@@ -63,90 +63,6 @@ fn empty_nonce_verifier(_nonce: Option<&Nonce>) -> Result<(), String> {
 pub struct UserService(pub Arc<SupportingService>);
 
 impl UserService {
-    async fn get_metadata_to_download_recommendations_for(
-        &self,
-        user_id: &String,
-    ) -> Result<Vec<String>> {
-        let cc = &self.0.cache_service;
-        let key = ApplicationCacheKey::UserMetadataRecommendationsSet(UserLevelCacheKey {
-            input: (),
-            user_id: user_id.to_owned(),
-        });
-        if let Some((_, recommendations)) = cc
-            .get_value::<ApplicationRecommendations>(key.clone())
-            .await
-        {
-            return Ok(recommendations);
-        }
-        #[derive(Debug, FromQueryResult)]
-        struct CustomQueryResponse {
-            id: String,
-            lot: MediaLot,
-            identifier: String,
-            source: MediaSource,
-        }
-        let media_items = CustomQueryResponse::find_by_statement(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-SELECT "m"."id", "m"."lot", "m"."identifier", "m"."source"
-FROM (
-    SELECT "user_id", "metadata_id" FROM "user_to_entity"
-    WHERE "user_id" = $1 AND "metadata_id" IS NOT NULL
-) "sub"
-JOIN "metadata" "m" ON "sub"."metadata_id" = "m"."id" AND "m"."source" NOT IN ($2, $3, $4, $5)
-ORDER BY RANDOM() LIMIT 10;
-        "#,
-            [
-                user_id.into(),
-                MediaSource::Vndb.into(),
-                MediaSource::Itunes.into(),
-                MediaSource::Custom.into(),
-                MediaSource::GoogleBooks.into(),
-            ],
-        ))
-        .all(&self.0.db)
-        .await?;
-        ryot_log!(
-            debug,
-            "Media items selected for recommendations: {:?}",
-            media_items
-        );
-        let mut media_item_ids = vec![];
-        for media in media_items.into_iter() {
-            ryot_log!(debug, "Getting recommendations: {:?}", media);
-            let provider = get_metadata_provider(media.lot, media.source, &self.0).await?;
-            let recommendations = provider
-                .get_recommendations_for_metadata(&media.identifier)
-                .await
-                .unwrap_or_default();
-            ryot_log!(debug, "Found recommendations: {:?}", recommendations);
-            for rec in recommendations {
-                if let Ok(meta) = create_partial_metadata(rec, &self.0.db).await {
-                    let relation = metadata_to_metadata::ActiveModel {
-                        to_metadata_id: ActiveValue::Set(meta.id.clone()),
-                        from_metadata_id: ActiveValue::Set(media.id.clone()),
-                        relation: ActiveValue::Set(MetadataToMetadataRelation::Suggestion),
-                        ..Default::default()
-                    };
-                    MetadataToMetadata::insert(relation)
-                        .on_conflict_do_nothing()
-                        .exec(&self.0.db)
-                        .await
-                        .ok();
-                    media_item_ids.push(meta.id);
-                }
-            }
-        }
-        self.0
-            .cache_service
-            .set_key(
-                key,
-                ApplicationCacheValue::UserMetadataRecommendationsSet(media_item_ids.clone()),
-            )
-            .await?;
-        Ok(media_item_ids)
-    }
-
     pub async fn user_metadata_recommendations(
         &self,
         user_id: &String,
@@ -171,9 +87,83 @@ ORDER BY RANDOM() LIMIT 10;
         let recommendations = match metadata_count {
             0 => vec![],
             _ => {
-                let calculated_recommendations = self
-                    .get_metadata_to_download_recommendations_for(user_id)
-                    .await?;
+                let calculated_recommendations = 'calc: {
+                    let cc = &self.0.cache_service;
+                    let key =
+                        ApplicationCacheKey::UserMetadataRecommendationsSet(UserLevelCacheKey {
+                            input: (),
+                            user_id: user_id.to_owned(),
+                        });
+                    if let Some((_, recommendations)) = cc
+                        .get_value::<ApplicationRecommendations>(key.clone())
+                        .await
+                    {
+                        break 'calc recommendations;
+                    }
+                    #[derive(Debug, FromQueryResult)]
+                    struct CustomQueryResponse {
+                        id: String,
+                    }
+                    let mut args = vec![user_id.into()];
+                    args.extend(
+                        MEDIA_SOURCES_WITHOUT_RECOMMENDATIONS
+                            .into_iter()
+                            .map(|s| s.into()),
+                    );
+                    let media_items =
+                        CustomQueryResponse::find_by_statement(Statement::from_sql_and_values(
+                            DatabaseBackend::Postgres,
+                            r#"
+SELECT "m"."id"
+FROM (
+    SELECT "user_id", "metadata_id" FROM "user_to_entity"
+    WHERE "user_id" = $1 AND "metadata_id" IS NOT NULL
+) "sub"
+JOIN "metadata" "m" ON "sub"."metadata_id" = "m"."id" AND "m"."source" NOT IN ($2, $3, $4, $5)
+ORDER BY RANDOM() LIMIT 10;
+        "#,
+                            args,
+                        ))
+                        .all(&self.0.db)
+                        .await?;
+                    ryot_log!(
+                        debug,
+                        "Media items selected for recommendations: {:?}",
+                        media_items
+                    );
+                    let mut media_item_ids = vec![];
+                    for media in media_items.into_iter() {
+                        ryot_log!(debug, "Getting recommendations: {:?}", media);
+                        update_metadata_and_notify_users(&media.id, &self.0).await?;
+                        let recommendations =
+                            generic_metadata(&media.id, &self.0).await?.suggestions;
+                        ryot_log!(debug, "Found recommendations: {:?}", recommendations);
+                        for rec in recommendations {
+                            let relation = metadata_to_metadata::ActiveModel {
+                                to_metadata_id: ActiveValue::Set(rec.clone()),
+                                from_metadata_id: ActiveValue::Set(media.id.clone()),
+                                relation: ActiveValue::Set(MetadataToMetadataRelation::Suggestion),
+                                ..Default::default()
+                            };
+                            MetadataToMetadata::insert(relation)
+                                .on_conflict_do_nothing()
+                                .exec(&self.0.db)
+                                .await
+                                .ok();
+                            media_item_ids.push(rec);
+                        }
+                    }
+                    self.0
+                        .cache_service
+                        .set_key(
+                            key,
+                            ApplicationCacheValue::UserMetadataRecommendationsSet(
+                                media_item_ids.clone(),
+                            ),
+                        )
+                        .await?;
+                    media_item_ids
+                };
                 let preferences = user_by_id(user_id, &self.0).await?.preferences;
                 let limit = preferences
                     .general
@@ -234,6 +224,7 @@ ORDER BY RANDOM() LIMIT 10;
                 recommendations
             }
         };
+        let cc = &self.0.cache_service;
         let id = cc
             .set_key(
                 metadata_recommendations_key,
@@ -560,82 +551,57 @@ ORDER BY RANDOM() LIMIT 10;
         Ok(true)
     }
 
-    pub async fn update_user_integration(
+    pub async fn create_or_update_user_integration(
         &self,
         user_id: String,
-        input: UpdateUserIntegrationInput,
+        input: CreateOrUpdateUserIntegrationInput,
     ) -> Result<bool> {
-        let db_integration = Integration::find_by_id(input.integration_id)
-            .one(&self.0.db)
-            .await?
-            .ok_or_else(|| Error::new("Integration with the given id does not exist"))?;
-        if db_integration.user_id != user_id {
-            return Err(Error::new("Integration does not belong to the user"));
-        }
-        if input.minimum_progress > input.maximum_progress {
-            return Err(Error::new(
-                "Minimum progress cannot be greater than maximum progress",
-            ));
-        }
-        let mut db_integration: integration::ActiveModel = db_integration.into();
-        if let Some(n) = input.name {
-            db_integration.name = ActiveValue::Set(Some(n));
-        }
-        if let Some(s) = input.minimum_progress {
-            db_integration.minimum_progress = ActiveValue::Set(Some(s));
-        }
-        if let Some(s) = input.maximum_progress {
-            db_integration.maximum_progress = ActiveValue::Set(Some(s));
-        }
-        if let Some(d) = input.is_disabled {
-            db_integration.is_disabled = ActiveValue::Set(Some(d));
-        }
-        if let Some(d) = input.sync_to_owned_collection {
-            db_integration.sync_to_owned_collection = ActiveValue::Set(Some(d));
-        }
-        db_integration.update(&self.0.db).await?;
-        Ok(true)
-    }
-
-    pub async fn create_user_integration(
-        &self,
-        user_id: String,
-        input: CreateUserIntegrationInput,
-    ) -> Result<StringIdObject> {
-        match input.provider {
-            IntegrationProvider::JellyfinPush | IntegrationProvider::YoutubeMusic => {
-                server_key_validation_guard(self.0.is_server_key_validated().await?).await?;
+        let mut lot = ActiveValue::NotSet;
+        let mut provider = ActiveValue::NotSet;
+        if let Some(p) = input.provider {
+            match p {
+                IntegrationProvider::JellyfinPush | IntegrationProvider::YoutubeMusic => {
+                    server_key_validation_guard(self.0.is_server_key_validated().await?).await?;
+                }
+                _ => {}
             }
-            _ => {}
-        }
+            let l = match p {
+                IntegrationProvider::Komga
+                | IntegrationProvider::PlexYank
+                | IntegrationProvider::YoutubeMusic
+                | IntegrationProvider::Audiobookshelf => IntegrationLot::Yank,
+                IntegrationProvider::Radarr
+                | IntegrationProvider::Sonarr
+                | IntegrationProvider::JellyfinPush => IntegrationLot::Push,
+                _ => IntegrationLot::Sink,
+            };
+            lot = ActiveValue::Set(l);
+            provider = ActiveValue::Set(p);
+        };
         if input.minimum_progress > input.maximum_progress {
             return Err(Error::new(
                 "Minimum progress cannot be greater than maximum progress",
             ));
         }
-        let lot = match input.provider {
-            IntegrationProvider::Komga
-            | IntegrationProvider::PlexYank
-            | IntegrationProvider::YoutubeMusic
-            | IntegrationProvider::Audiobookshelf => IntegrationLot::Yank,
-            IntegrationProvider::Radarr
-            | IntegrationProvider::Sonarr
-            | IntegrationProvider::JellyfinPush => IntegrationLot::Push,
-            _ => IntegrationLot::Sink,
+        let id = match input.integration_id {
+            None => ActiveValue::NotSet,
+            Some(id) => ActiveValue::Set(id),
         };
         let to_insert = integration::ActiveModel {
-            lot: ActiveValue::Set(lot),
+            id,
+            lot,
+            provider,
             name: ActiveValue::Set(input.name),
             user_id: ActiveValue::Set(user_id),
-            provider: ActiveValue::Set(input.provider),
+            is_disabled: ActiveValue::Set(input.is_disabled),
             minimum_progress: ActiveValue::Set(input.minimum_progress),
             maximum_progress: ActiveValue::Set(input.maximum_progress),
             provider_specifics: ActiveValue::Set(input.provider_specifics),
             sync_to_owned_collection: ActiveValue::Set(input.sync_to_owned_collection),
             ..Default::default()
         };
-        let integration = to_insert.insert(&self.0.db).await?;
-        Ok(StringIdObject { id: integration.id })
+        to_insert.save(&self.0.db).await?;
+        Ok(true)
     }
 
     pub async fn delete_user_integration(

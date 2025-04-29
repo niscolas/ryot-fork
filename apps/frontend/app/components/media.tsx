@@ -32,7 +32,7 @@ import {
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useMemo } from "react";
-import { Form, Link } from "react-router";
+import { Form, Link, useNavigate } from "react-router";
 import { $path } from "safe-routes";
 import { match } from "ts-pattern";
 import { withQuery } from "ufo";
@@ -47,6 +47,7 @@ import {
 	getPartialMetadataDetailsQuery,
 	openConfirmationModal,
 	queryFactory,
+	refreshEntityDetails,
 	reviewYellow,
 } from "~/lib/common";
 import {
@@ -114,9 +115,9 @@ export const PartialMetadataDisplay = (props: {
 	return (
 		<BaseEntityDisplay
 			extraText={props.extraText}
-			image={metadataDetails?.image || undefined}
 			title={metadataDetails?.title || undefined}
 			hasInteracted={userMetadataDetails?.hasInteracted}
+			image={metadataDetails?.assets.remoteImages.at(0) || undefined}
 			link={$path("/media/item/:id", { id: props.metadataId })}
 		/>
 	);
@@ -130,21 +131,75 @@ export const MediaScrollArea = (props: { children: ReactNode }) => {
 	);
 };
 
+const DisplayAverageRatingOverlay = (props: {
+	entityId: string;
+	entityLot: EntityLot;
+	entityTitle?: string;
+	metadataLot?: MediaLot;
+	averageRating?: string | null;
+}) => {
+	const userPreferences = useUserPreferences();
+	const [_r, setEntityToReview] = useReviewEntity();
+
+	return props.averageRating ? (
+		match(userPreferences.general.reviewScale)
+			.with(UserReviewScale.ThreePointSmiley, () => (
+				<DisplayThreePointReview rating={props.averageRating} />
+			))
+			.otherwise(() => (
+				<Group gap={4}>
+					<IconStarFilled size={12} style={{ color: reviewYellow }} />
+					<Text c="white" size="xs" fw="bold" pr={4}>
+						{Number(props.averageRating) % 1 === 0
+							? Math.round(Number(props.averageRating)).toString()
+							: Number(props.averageRating).toFixed(1)}
+						{userPreferences.general.reviewScale ===
+						UserReviewScale.OutOfHundred
+							? " %"
+							: undefined}
+						{userPreferences.general.reviewScale === UserReviewScale.OutOfTen
+							? "/10"
+							: undefined}
+					</Text>
+				</Group>
+			))
+	) : (
+		<IconStarFilled
+			size={18}
+			cursor="pointer"
+			className={classes.starIcon}
+			onClick={() => {
+				if (props.entityTitle)
+					setEntityToReview({
+						entityId: props.entityId,
+						entityLot: props.entityLot,
+						entityTitle: props.entityTitle,
+						metadataLot: props.metadataLot,
+					});
+			}}
+		/>
+	);
+};
+
 export const MetadataDisplayItem = (props: {
-	metadataId: string;
 	name?: string;
 	altName?: string;
+	metadataId: string;
 	topRight?: ReactNode;
-	rightLabel?: ReactNode;
-	rightLabelHistory?: boolean;
-	rightLabelLot?: boolean;
+	nameRight?: ReactNode;
 	noLeftLabel?: boolean;
+	rightLabel?: ReactNode;
+	rightLabelLot?: boolean;
+	imageClassName?: string;
+	rightLabelHistory?: boolean;
+	onImageClickBehavior?: () => void;
+	shouldHighlightNameIfInteracted?: boolean;
 }) => {
-	const [_r, setEntityToReview] = useReviewEntity();
 	const [_m, setMetadataToUpdate, isMetadataToUpdateLoading] =
 		useMetadataProgressUpdate();
-	const userPreferences = useUserPreferences();
 	const { ref, inViewport } = useInViewport();
+	const navigate = useNavigate();
+
 	const { data: metadataDetails, isLoading: isMetadataDetailsLoading } =
 		useMetadataDetails(props.metadataId, inViewport);
 	const { data: userMetadataDetails } = useUserMetadataDetails(
@@ -206,11 +261,20 @@ export const MetadataDisplayItem = (props: {
 			innerRef={ref}
 			altName={props.altName}
 			progress={currentProgress}
+			nameRight={props.nameRight}
 			isLoading={isMetadataDetailsLoading}
+			imageClassName={props.imageClassName}
 			name={props.name ?? metadataDetails?.title}
-			imageUrl={metadataDetails?.assets.images.at(0)}
+			imageUrl={metadataDetails?.assets.remoteImages.at(0)}
 			highlightImage={userMetadataDetails?.isRecentlyConsumed}
-			onImageClickBehavior={$path("/media/item/:id", { id: props.metadataId })}
+			highlightName={
+				props.shouldHighlightNameIfInteracted &&
+				userMetadataDetails?.hasInteracted
+			}
+			onImageClickBehavior={async () => {
+				props.onImageClickBehavior?.();
+				navigate($path("/media/item/:id", { id: props.metadataId }));
+			}}
 			labels={
 				metadataDetails
 					? {
@@ -229,41 +293,13 @@ export const MetadataDisplayItem = (props: {
 					: undefined
 			}
 			imageOverlay={{
-				topRight: props.topRight ? (
-					props.topRight
-				) : averageRating ? (
-					match(userPreferences.general.reviewScale)
-						.with(UserReviewScale.ThreePointSmiley, () => (
-							<DisplayThreePointReview rating={averageRating} />
-						))
-						.otherwise(() => (
-							<Group gap={4}>
-								<IconStarFilled size={12} style={{ color: reviewYellow }} />
-								<Text c="white" size="xs" fw="bold" pr={4}>
-									{Number(averageRating) % 1 === 0
-										? Math.round(Number(averageRating)).toString()
-										: Number(averageRating).toFixed(1)}
-									{userPreferences.general.reviewScale ===
-									UserReviewScale.OutOfFive
-										? null
-										: " %"}
-								</Text>
-							</Group>
-						))
-				) : (
-					<IconStarFilled
-						cursor="pointer"
-						onClick={() => {
-							if (metadataDetails)
-								setEntityToReview({
-									entityId: props.metadataId,
-									entityLot: EntityLot.Metadata,
-									metadataLot: metadataDetails.lot,
-									entityTitle: metadataDetails.title,
-								});
-						}}
-						size={18}
-						className={classes.starIcon}
+				topRight: props.topRight || (
+					<DisplayAverageRatingOverlay
+						entityId={props.metadataId}
+						averageRating={averageRating}
+						entityLot={EntityLot.Metadata}
+						metadataLot={metadataDetails?.lot}
+						entityTitle={metadataDetails?.title}
 					/>
 				),
 				bottomLeft:
@@ -293,9 +329,9 @@ export const MetadataDisplayItem = (props: {
 					<Loader color="red" size="xs" m={2} />
 				) : (
 					<ActionIcon
-						variant="transparent"
 						color="blue"
 						size="compact-md"
+						variant="transparent"
 						onClick={() =>
 							setMetadataToUpdate({ metadataId: props.metadataId }, true)
 						}
@@ -309,10 +345,11 @@ export const MetadataDisplayItem = (props: {
 };
 
 export const MetadataGroupDisplayItem = (props: {
-	metadataGroupId: string;
 	topRight?: ReactNode;
-	rightLabel?: ReactNode;
 	noLeftLabel?: boolean;
+	rightLabel?: ReactNode;
+	metadataGroupId: string;
+	shouldHighlightNameIfInteracted?: boolean;
 }) => {
 	const { ref, inViewport } = useInViewport();
 	const { data: metadataDetails, isLoading: isMetadataDetailsLoading } =
@@ -321,6 +358,7 @@ export const MetadataGroupDisplayItem = (props: {
 			enabled: inViewport,
 		});
 	const { data: userMetadataGroupDetails } = useQuery({
+		enabled: inViewport,
 		queryKey: queryFactory.media.userMetadataGroupDetails(props.metadataGroupId)
 			.queryKey,
 		queryFn: async () => {
@@ -328,20 +366,34 @@ export const MetadataGroupDisplayItem = (props: {
 				.request(UserMetadataGroupDetailsDocument, props)
 				.then((data) => data.userMetadataGroupDetails);
 		},
-		enabled: inViewport,
 	});
+
+	const averageRating = userMetadataGroupDetails?.averageRating;
 
 	return (
 		<BaseMediaDisplayItem
 			innerRef={ref}
 			isLoading={isMetadataDetailsLoading}
 			name={metadataDetails?.details.title}
-			imageOverlay={{ topRight: props.topRight }}
+			imageUrl={metadataDetails?.details.assets.remoteImages.at(0)}
 			highlightImage={userMetadataGroupDetails?.isRecentlyConsumed}
 			onImageClickBehavior={$path("/media/groups/item/:id", {
 				id: props.metadataGroupId,
 			})}
-			imageUrl={metadataDetails?.details.displayImages.at(0)}
+			highlightName={
+				props.shouldHighlightNameIfInteracted &&
+				userMetadataGroupDetails?.hasInteracted
+			}
+			imageOverlay={{
+				topRight: props.topRight || (
+					<DisplayAverageRatingOverlay
+						averageRating={averageRating}
+						entityId={props.metadataGroupId}
+						entityLot={EntityLot.MetadataGroup}
+						entityTitle={metadataDetails?.details.title}
+					/>
+				),
+			}}
 			labels={
 				metadataDetails
 					? {
@@ -363,6 +415,7 @@ export const PersonDisplayItem = (props: {
 	personId: string;
 	topRight?: ReactNode;
 	rightLabel?: ReactNode;
+	shouldHighlightNameIfInteracted?: boolean;
 }) => {
 	const { ref, inViewport } = useInViewport();
 	const { data: personDetails, isLoading: isPersonDetailsLoading } = useQuery({
@@ -384,17 +437,32 @@ export const PersonDisplayItem = (props: {
 		},
 	});
 
+	const averageRating = userPersonDetails?.averageRating;
+
 	return (
 		<BaseMediaDisplayItem
 			innerRef={ref}
 			name={personDetails?.details.name}
 			isLoading={isPersonDetailsLoading}
-			imageOverlay={{ topRight: props.topRight }}
 			highlightImage={userPersonDetails?.isRecentlyConsumed}
-			imageUrl={personDetails?.details.displayImages.at(0)}
+			imageUrl={personDetails?.details.assets.remoteImages.at(0)}
 			onImageClickBehavior={$path("/media/people/item/:id", {
 				id: props.personId,
 			})}
+			highlightName={
+				props.shouldHighlightNameIfInteracted &&
+				userPersonDetails?.hasInteracted
+			}
+			imageOverlay={{
+				topRight: props.topRight || (
+					<DisplayAverageRatingOverlay
+						entityId={props.personId}
+						entityLot={EntityLot.Person}
+						averageRating={averageRating}
+						entityTitle={personDetails?.details.name}
+					/>
+				),
+			}}
 			labels={{
 				right: props.rightLabel,
 				left: personDetails
@@ -406,9 +474,9 @@ export const PersonDisplayItem = (props: {
 };
 
 export const ToggleMediaMonitorMenuItem = (props: {
+	formValue: string;
 	entityLot: EntityLot;
 	inCollections: Array<string>;
-	formValue: string;
 }) => {
 	const isMonitored = props.inCollections.includes("Monitoring");
 	const action = isMonitored
@@ -416,6 +484,11 @@ export const ToggleMediaMonitorMenuItem = (props: {
 		: "addEntityToCollection";
 	const userDetails = useUserDetails();
 	const submit = useConfirmSubmit();
+
+	const onSubmit = (form: HTMLFormElement) => {
+		submit(form);
+		refreshEntityDetails(props.formValue);
+	};
 
 	return (
 		<Form
@@ -436,9 +509,9 @@ export const ToggleMediaMonitorMenuItem = (props: {
 						if (isMonitored)
 							openConfirmationModal(
 								"Are you sure you want to stop monitoring?",
-								() => submit(form),
+								() => onSubmit(form),
 							);
-						else submit(form);
+						else onSubmit(form);
 					}
 				}}
 			>

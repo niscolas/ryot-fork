@@ -42,15 +42,15 @@ export const loader = async ({ request, params }: Route.LoaderArgs) => {
 	await redirectUsingEnhancedCookieSearchParams(request, cookieName);
 	const query = parseSearchQuery(request, searchParamsSchema);
 	const [{ genreDetails }] = await Promise.all([
-		serverGqlService.request(GenreDetailsDocument, {
+		serverGqlService.authenticatedRequest(request, GenreDetailsDocument, {
 			input: { genreId, page: query[pageQueryParam] },
 		}),
 	]);
-	const totalPages = await redirectToFirstPageIfOnInvalidPage(
+	const totalPages = await redirectToFirstPageIfOnInvalidPage({
 		request,
-		genreDetails.contents.details.total,
-		query[pageQueryParam],
-	);
+		currentPage: query[pageQueryParam],
+		totalResults: genreDetails.contents.details.total,
+	});
 	return { query, genreDetails, cookieName, totalPages };
 };
 

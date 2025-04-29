@@ -3,7 +3,6 @@ import type { FileUpload } from "@mjackson/form-data-parser";
 import {
 	BackendError,
 	CoreDetailsDocument,
-	GetPresignedS3UrlDocument,
 	PresignedPutS3UrlDocument,
 	UserCollectionsListDocument,
 } from "@ryot/generated/graphql/backend/graphql";
@@ -219,14 +218,6 @@ export const uploadFileAndGetKey = async (
 	return presignedPutS3Url.key;
 };
 
-export const getPresignedGetUrl = async (key: string) => {
-	const { getPresignedS3Url } = await serverGqlService.request(
-		GetPresignedS3UrlDocument,
-		{ key },
-	);
-	return getPresignedS3Url;
-};
-
 const fileUploadToFile = async (fileUpload: FileUpload) => {
 	const bytes = await fileUpload.bytes();
 	return new File([bytes], fileUpload.name);
@@ -375,15 +366,24 @@ export const redirectUsingEnhancedCookieSearchParams = async (
 	if (!isEmpty(savedSearchParams)) throw redirect(`?${savedSearchParams}`);
 };
 
-export const redirectToFirstPageIfOnInvalidPage = async (
-	request: Request,
-	totalResults: number,
-	currentPage: number,
-) => {
-	const coreDetails = await getCoreDetails();
-	const totalPages = Math.ceil(totalResults / coreDetails.pageSize);
-	if (currentPage > totalPages && currentPage !== 1) {
-		const { searchParams } = new URL(request.url);
+export const redirectToFirstPageIfOnInvalidPage = async (input: {
+	request: Request;
+	currentPage: number;
+	totalResults: number;
+	respectCoreDetailsPageSize?: boolean;
+}) => {
+	const [coreDetails, userPreferences] = await Promise.all([
+		getCoreDetails(),
+		getUserPreferences(input.request),
+	]);
+	const totalPages = Math.ceil(
+		input.totalResults /
+			(input.respectCoreDetailsPageSize
+				? coreDetails.pageSize
+				: userPreferences.general.listPageSize),
+	);
+	if (input.currentPage > totalPages && input.currentPage !== 1) {
+		const { searchParams } = new URL(input.request.url);
 		searchParams.set(pageQueryParam, "1");
 		throw redirect(`?${searchParams.toString()}`);
 	}

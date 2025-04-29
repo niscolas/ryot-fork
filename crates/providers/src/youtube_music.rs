@@ -1,18 +1,17 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use common_models::{PersonSourceSpecifics, SearchDetails, StoredUrl};
+use common_models::{EntityAssets, PersonSourceSpecifics, SearchDetails};
 use common_utils::TEMPORARY_DIRECTORY;
 use database_models::metadata_group::MetadataGroupWithoutId;
 use dependent_models::{
-    MetadataGroupPersonRelated, MetadataGroupSearchResponse, MetadataPersonRelated,
-    PeopleSearchResponse, PersonDetails, SearchResults,
+    MetadataGroupPersonRelated, MetadataPersonRelated, PersonDetails, SearchResults,
 };
 use enum_models::{MediaLot, MediaSource};
 use itertools::Itertools;
 use media_models::{
-    CommitMediaInput, MetadataDetails, MetadataGroupSearchItem, MetadataImage,
-    MetadataImageForMediaDetails, MetadataSearchItem, MusicSpecifics, PartialMetadataPerson,
-    PartialMetadataWithoutId, PeopleSearchItem, UniqueMediaIdentifier,
+    CommitMetadataGroupInput, MetadataDetails, MetadataGroupSearchItem, MetadataSearchItem,
+    MusicSpecifics, PartialMetadataPerson, PartialMetadataWithoutId, PeopleSearchItem,
+    UniqueMediaIdentifier,
 };
 use rustypipe::{
     client::{RustyPipe, RustyPipeQuery},
@@ -66,6 +65,7 @@ impl MediaProvider for YoutubeMusicService {
                     lot: MediaLot::Music,
                     source: MediaSource::YoutubeMusic,
                     image: self.largest_image(&t.cover).map(|c| c.url.to_owned()),
+                    ..Default::default()
                 })
                 .collect()
         } else {
@@ -82,13 +82,14 @@ impl MediaProvider for YoutubeMusicService {
                 .track
                 .album
                 .into_iter()
-                .map(|a| CommitMediaInput {
+                .map(|a| CommitMetadataGroupInput {
                     name: a.name,
                     unique: UniqueMediaIdentifier {
                         identifier: a.id,
                         lot: MediaLot::Music,
                         source: MediaSource::YoutubeMusic,
                     },
+                    ..Default::default()
                 })
                 .collect(),
             source_url: Some(format!("https://music.youtube.com/watch?v={}", identifier)),
@@ -97,11 +98,14 @@ impl MediaProvider for YoutubeMusicService {
                 duration: details.track.duration.map(|d| d.try_into().unwrap()),
                 view_count: details.track.view_count.map(|v| v.try_into().unwrap()),
             }),
-            url_images: self
-                .order_images_by_size(&details.track.cover)
-                .into_iter()
-                .map(|t| MetadataImageForMediaDetails { image: t.url })
-                .collect(),
+            assets: EntityAssets {
+                remote_images: self
+                    .order_images_by_size(&details.track.cover)
+                    .into_iter()
+                    .map(|t| t.url)
+                    .collect(),
+                ..Default::default()
+            },
             people: details
                 .track
                 .artists
@@ -164,15 +168,14 @@ impl MediaProvider for YoutubeMusicService {
                 source_url: album
                     .playlist_id
                     .map(|id| format!("https://music.youtube.com/playlist?list={}", id)),
-                images: Some(
-                    self.largest_image(&album.cover)
+                assets: EntityAssets {
+                    remote_images: self
+                        .largest_image(&album.cover)
                         .into_iter()
-                        .map(|c| MetadataImage {
-                            url: StoredUrl::Url(c.url),
-                        })
+                        .map(|c| c.url)
                         .collect(),
-                ),
-                ..Default::default()
+                    ..Default::default()
+                },
             },
             album
                 .tracks
@@ -183,6 +186,7 @@ impl MediaProvider for YoutubeMusicService {
                     lot: MediaLot::Music,
                     source: MediaSource::YoutubeMusic,
                     image: self.largest_image(&t.cover).map(|t| t.url.to_owned()),
+                    ..Default::default()
                 })
                 .collect(),
         ))
@@ -193,7 +197,7 @@ impl MediaProvider for YoutubeMusicService {
         query: &str,
         _page: Option<i32>,
         _display_nsfw: bool,
-    ) -> Result<MetadataGroupSearchResponse> {
+    ) -> Result<SearchResults<MetadataGroupSearchItem>> {
         let data = self.client.music_search_albums(query).await?;
         Ok(SearchResults {
             details: SearchDetails {
@@ -236,6 +240,7 @@ impl MediaProvider for YoutubeMusicService {
                             lot: MediaLot::Music,
                             source: MediaSource::YoutubeMusic,
                             image: self.largest_image(&t.cover).map(|t| t.url.to_owned()),
+                            ..Default::default()
                         },
                         ..Default::default()
                     })
@@ -252,14 +257,14 @@ impl MediaProvider for YoutubeMusicService {
                     lot: MediaLot::Music,
                     identifier: a.id.clone(),
                     source: MediaSource::YoutubeMusic,
-                    images: Some(
-                        self.order_images_by_size(&a.cover)
+                    assets: EntityAssets {
+                        remote_images: self
+                            .largest_image(&a.cover)
                             .into_iter()
-                            .map(|c| MetadataImage {
-                                url: StoredUrl::Url(c.url),
-                            })
+                            .map(|c| c.url)
                             .collect(),
-                    ),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             })
@@ -273,12 +278,14 @@ impl MediaProvider for YoutubeMusicService {
             identifier: identifier.clone(),
             source: MediaSource::YoutubeMusic,
             source_url: Some(format!("https://music.youtube.com/channel/{}", identifier)),
-            images: Some(
-                self.largest_image(&data.header_image)
+            assets: EntityAssets {
+                remote_images: self
+                    .largest_image(&data.header_image)
                     .into_iter()
                     .map(|t| t.url.to_owned())
                     .collect(),
-            ),
+                ..Default::default()
+            },
             ..Default::default()
         })
     }
@@ -287,9 +294,9 @@ impl MediaProvider for YoutubeMusicService {
         &self,
         query: &str,
         _page: Option<i32>,
-        _source_specifics: &Option<PersonSourceSpecifics>,
         _display_nsfw: bool,
-    ) -> Result<PeopleSearchResponse> {
+        _source_specifics: &Option<PersonSourceSpecifics>,
+    ) -> Result<SearchResults<PeopleSearchItem>> {
         let data = self.client.music_search_artists(query).await?;
         Ok(SearchResults {
             details: SearchDetails {

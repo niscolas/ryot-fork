@@ -8,7 +8,6 @@ import {
 	Divider,
 	Group,
 	Input,
-	JsonInput,
 	MultiSelect,
 	NumberInput,
 	Paper,
@@ -44,7 +43,7 @@ import {
 	snakeCase,
 	startCase,
 } from "@ryot/ts-utils";
-import { IconCheckbox } from "@tabler/icons-react";
+import { IconCheckbox, IconMinus } from "@tabler/icons-react";
 import {
 	IconAlertCircle,
 	IconBellRinging,
@@ -359,34 +358,53 @@ export default function Page() {
 								))}
 							</SimpleGrid>
 							<Stack gap="xs">
-								<Select
-									size="xs"
-									disabled={!!isEditDisabled}
-									label="Default landing page"
-									data={loaderData.userPreferenceLandingPaths}
-									defaultValue={userPreferences.general.landingPath}
-									description="The page you want to see when you first open the app"
-									onChange={(value) => {
-										if (false) {
-											notifications.show({
-												color: "red",
-												message: PRO_REQUIRED_MESSAGE,
-											});
-											return;
-										}
-										if (value) {
-											updatePreference((draft) => {
-												draft.general.landingPath = value;
-											});
-										}
-									}}
-								/>
+								<Divider />
+								<Group wrap="nowrap">
+									<Select
+										size="xs"
+										disabled={!!isEditDisabled}
+										label="Default landing page"
+										data={loaderData.userPreferenceLandingPaths}
+										defaultValue={userPreferences.general.landingPath}
+										description="The page you want to see when you first open the app"
+										onChange={(value) => {
+											if (!coreDetails.isServerKeyValidated) {
+												notifications.show({
+													color: "red",
+													message: PRO_REQUIRED_MESSAGE,
+												});
+												return;
+											}
+											if (value) {
+												updatePreference((draft) => {
+													draft.general.landingPath = value;
+												});
+											}
+										}}
+									/>
+									<NumberInput
+										min={5}
+										size="xs"
+										label="List page size"
+										disabled={!!isEditDisabled}
+										defaultValue={userPreferences.general.listPageSize}
+										description="The number of items to display on the list pages"
+										onChange={(val) => {
+											if (isNumber(val)) {
+												updatePreference((draft) => {
+													draft.general.listPageSize = val;
+												});
+											}
+										}}
+									/>
+								</Group>
 								<Input.Wrapper
 									label="Review scale"
 									description="Scale you want to use for reviews"
 								>
 									<SegmentedControl
 										mt="xs"
+										size="xs"
 										fullWidth
 										disabled={!!isEditDisabled}
 										defaultValue={userPreferences.general.reviewScale}
@@ -409,6 +427,7 @@ export default function Page() {
 								>
 									<SegmentedControl
 										mt="xs"
+										size="xs"
 										fullWidth
 										disabled={!!isEditDisabled}
 										defaultValue={userPreferences.general.gridPacking}
@@ -425,6 +444,7 @@ export default function Page() {
 										}}
 									/>
 								</Input.Wrapper>
+								<Divider />
 							</Stack>
 							<Stack gap="sm">
 								<Title order={3}>Watch providers</Title>
@@ -442,7 +462,7 @@ export default function Page() {
 											placeholder="Enter more providers"
 											onChange={(val) => {
 												if (val) {
-													const newWatchProviders = Array.from(watchProviders);
+													const newWatchProviders = cloneDeep(watchProviders);
 													let existingMediaLot = newWatchProviders.find(
 														(wp) => wp.lot === lot,
 													);
@@ -543,13 +563,7 @@ export default function Page() {
 							</Input.Wrapper>
 							<Divider />
 							<Title order={4}>Workout logging</Title>
-							{(
-								[
-									"muteSounds",
-									"promptForRestTimer",
-									"showDetailsWhileEditing",
-								] as const
-							).map((option) => {
+							{(["muteSounds", "promptForRestTimer"] as const).map((option) => {
 								const [label, isGatedBehindServerKeyValidation] = match(option)
 									.with(
 										"muteSounds",
@@ -561,13 +575,6 @@ export default function Page() {
 											[
 												"Prompt for rest timer when confirming sets",
 												true,
-											] as const,
-									)
-									.with(
-										"showDetailsWhileEditing",
-										() =>
-											[
-												"Show details and history while editing workouts/templates",
 											] as const,
 									)
 									.exhaustive();
@@ -614,45 +621,82 @@ export default function Page() {
 								}}
 							/>
 							<Divider />
-							<Input.Wrapper label="The default measurements you want to keep track of">
-								<SimpleGrid cols={2} mt="xs">
-									{Object.entries(
-										userPreferences.fitness.measurements.inbuilt,
-									).map(([name, isEnabled]) => (
-										<Switch
-											size="xs"
-											key={name}
-											label={changeCase(snakeCase(name))}
-											defaultChecked={isEnabled}
-											disabled={!!isEditDisabled}
-											onChange={(ev) => {
-												updatePreference((draft) => {
-													// biome-ignore lint/suspicious/noExplicitAny: too much work to use correct types
-													(draft as any).fitness.measurements.inbuilt[name] =
-														ev.currentTarget.checked;
-												});
-											}}
-										/>
-									))}
-								</SimpleGrid>
-							</Input.Wrapper>
-							<JsonInput
-								autosize
-								formatOnBlur
-								disabled={!!isEditDisabled}
-								label="The custom metrics you want to keep track of"
-								description="The name of the attribute along with the data type. Only decimal data type is supported."
-								defaultValue={JSON.stringify(
-									userPreferences.fitness.measurements.custom,
-									null,
-									4,
+							<Stack gap="xs">
+								<Text size="sm">
+									The measurements you want to keep track of
+								</Text>
+								{changingUserPreferences.value.fitness.measurements.statistics.map(
+									(s, index) => (
+										<Group
+											wrap="nowrap"
+											key={`${
+												// biome-ignore lint/suspicious/noArrayIndexKey: index is unique
+												index
+											}`}
+										>
+											<TextInput
+												size="xs"
+												label="Name"
+												value={s.name}
+												disabled={!!isEditDisabled}
+												onChange={(val) => {
+													updatePreference((draft) => {
+														draft.fitness.measurements.statistics[index].name =
+															val.target.value;
+													});
+												}}
+											/>
+											<TextInput
+												size="xs"
+												label="Unit"
+												value={s.unit || undefined}
+												disabled={!!isEditDisabled}
+												onChange={(val) => {
+													updatePreference((draft) => {
+														draft.fitness.measurements.statistics[index].unit =
+															val.target.value;
+													});
+												}}
+											/>
+											<ActionIcon
+												mt={14}
+												size="xs"
+												color="red"
+												variant="outline"
+												disabled={
+													!!isEditDisabled ||
+													changingUserPreferences.value.fitness.measurements
+														.statistics.length === 1
+												}
+												onClick={() => {
+													updatePreference((draft) => {
+														draft.fitness.measurements.statistics.splice(
+															index,
+															1,
+														);
+													});
+												}}
+											>
+												<IconMinus />
+											</ActionIcon>
+										</Group>
+									),
 								)}
-								onChange={(v) => {
-									updatePreference((draft) => {
-										draft.fitness.measurements.custom = JSON.parse(v);
-									});
-								}}
-							/>
+								<Button
+									ml="auto"
+									size="xs"
+									variant="outline"
+									onClick={() => {
+										updatePreference((draft) => {
+											draft.fitness.measurements.statistics.push({
+												name: "<name>",
+											});
+										});
+									}}
+								>
+									Add
+								</Button>
+							</Stack>
 						</Stack>
 					</Tabs.Panel>
 				</Tabs>
@@ -736,8 +780,8 @@ const EditDashboardElement = (props: {
 								defaultValue={focusedElement.numElements || undefined}
 								onChange={(num) => {
 									if (isNumber(num)) {
-										const newDashboardData = Array.from(
-											cloneDeep(userPreferences.general.dashboard),
+										const newDashboardData = cloneDeep(
+											userPreferences.general.dashboard,
 										);
 										newDashboardData[focusedElementIndex].numElements = num;
 										props.updatePreference((draft) => {

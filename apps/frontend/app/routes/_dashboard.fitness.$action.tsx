@@ -13,6 +13,7 @@ import {
 	Drawer,
 	FileButton,
 	Flex,
+	FocusTrap,
 	Group,
 	Image,
 	Menu,
@@ -49,6 +50,7 @@ import {
 	CreateOrUpdateUserWorkoutTemplateDocument,
 	type ExerciseDetailsQuery,
 	ExerciseLot,
+	GetPresignedS3UrlDocument,
 	SetLot,
 	type UserExerciseDetailsQuery,
 	UserUnitSystem,
@@ -70,7 +72,6 @@ import {
 	IconCheck,
 	IconChevronUp,
 	IconClipboard,
-	IconClock,
 	IconDeviceWatch,
 	IconDeviceWatchCancel,
 	IconDeviceWatchPause,
@@ -79,7 +80,6 @@ import {
 	IconDropletFilled,
 	IconDropletHalf2Filled,
 	IconHeartSpark,
-	IconInfoCircle,
 	IconLayersIntersect,
 	IconLibraryPhoto,
 	IconPhoto,
@@ -87,6 +87,7 @@ import {
 	IconReplace,
 	IconStopwatch,
 	IconTrash,
+	IconVideo,
 	IconZzz,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
@@ -103,6 +104,7 @@ import { match } from "ts-pattern";
 import { useInterval, useOnClickOutside } from "usehooks-ts";
 import { v4 as randomUUID } from "uuid";
 import { z } from "zod";
+import { ProRequiredAlert } from "~/components/common";
 import {
 	DisplaySetStatistics,
 	ExerciseHistory,
@@ -113,6 +115,7 @@ import {
 	FitnessEntity,
 	PRO_REQUIRED_MESSAGE,
 	clientGqlService,
+	clientSideFileUpload,
 	dayjsLib,
 	getExerciseDetailsPath,
 	getSetColor,
@@ -140,6 +143,7 @@ import {
 	convertHistorySetToCurrentSet,
 	currentWorkoutToCreateWorkoutInput,
 	getExerciseDetailsQuery,
+	getExerciseImages,
 	getRestTimerForSet,
 	getUserExerciseDetailsQuery,
 	getWorkoutDetails,
@@ -663,7 +667,7 @@ export default function Page() {
 														for (const e of currentWorkout.exercises) {
 															const assets = [...e.images, ...e.videos];
 															for (const asset of assets)
-																deleteUploadedAsset(asset.key);
+																deleteUploadedAsset(asset);
 														}
 														navigate($path("/"), { replace: true });
 														setCurrentWorkout(RESET);
@@ -766,12 +770,11 @@ const NameAndOtherInputs = (props: {
 	}, [name]);
 
 	useDidUpdate(() => {
-		if (comment)
-			setCurrentWorkout(
-				produce(currentWorkout, (draft) => {
-					draft.comment = comment;
-				}),
-			);
+		setCurrentWorkout(
+			produce(currentWorkout, (draft) => {
+				draft.comment = comment || undefined;
+			}),
+		);
 	}, [comment]);
 
 	useDidUpdate(() => {
@@ -1014,10 +1017,28 @@ const StatInput = (props: {
 	) : null;
 };
 
-const ImageDisplay = (props: { imageSrc: string; removeImage: () => void }) => {
+const AssetDisplay = (props: {
+	s3Key: string;
+	type: "video" | "image";
+	removeAsset: () => void;
+}) => {
+	const srcUrlQuery = useQuery({
+		queryKey: queryFactory.miscellaneous.presignedS3Url(props.s3Key).queryKey,
+		queryFn: () =>
+			clientGqlService
+				.request(GetPresignedS3UrlDocument, { key: props.s3Key })
+				.then((v) => v.getPresignedS3Url),
+	});
+
 	return (
 		<Box pos="relative">
-			<Avatar src={props.imageSrc} size="lg" />
+			{props.type === "video" ? (
+				<Link to={srcUrlQuery.data ?? ""} target="_blank">
+					<Avatar size="lg" name="Video" />
+				</Link>
+			) : (
+				<Avatar src={srcUrlQuery.data} size="lg" />
+			)}
 			<ActionIcon
 				top={0}
 				size="xs"
@@ -1026,8 +1047,8 @@ const ImageDisplay = (props: { imageSrc: string; removeImage: () => void }) => {
 				pos="absolute"
 				onClick={() => {
 					openConfirmationModal(
-						"Are you sure you want to remove this image?",
-						() => props.removeImage(),
+						"Are you sure you want to remove this video?",
+						() => props.removeAsset(),
 					);
 				}}
 			>
@@ -1299,9 +1320,10 @@ const focusOnExercise = (idx: number) => {
 const exerciseHasDetailsToShow = (
 	details?: ExerciseDetails,
 	userDetails?: UserExerciseDetails,
-) =>
-	(details?.attributes.images.length || 0) > 0 ||
-	(userDetails?.history?.length || 0) > 0;
+) => {
+	const images = getExerciseImages(details);
+	return (images.length || 0) > 0 || (userDetails?.history?.length || 0) > 0;
+};
 
 const UploadAssetsModal = (props: {
 	closeModal: () => void;
@@ -1314,8 +1336,11 @@ const UploadAssetsModal = (props: {
 
 	if (!currentWorkout) return null;
 
-	const afterFileSelected = async (file: File | null) => {
-		if (props.modalOpenedBy === null && false) {
+	const afterFileSelected = async (
+		file: File | null,
+		type: "image" | "video",
+	) => {
+		if (props.modalOpenedBy === null && !coreDetails.isServerKeyValidated) {
 			notifications.show({
 				color: "red",
 				message: PRO_REQUIRED_MESSAGE,
@@ -1324,26 +1349,23 @@ const UploadAssetsModal = (props: {
 		}
 		if (!file) return;
 		setIsFileUploading(true);
-		const imageSrc = URL.createObjectURL(file);
-		const toSubmitForm = new FormData();
-		toSubmitForm.append("file", file, "image.jpg");
 		try {
-			const resp = await fetch(
-				$path("/actions", { intent: "uploadWorkoutAsset" }),
-				{ method: "POST", body: toSubmitForm },
-			);
-			const data = await resp.json();
+			const key = await clientSideFileUpload(file, "workouts");
 			setCurrentWorkout(
 				produce(currentWorkout, (draft) => {
-					const media = { imageSrc, key: data.key };
-					if (exercise) draft.exercises[exerciseIdx].images.push(media);
-					else draft.images.push(media);
+					if (type === "image") {
+						if (exercise) draft.exercises[exerciseIdx].images.push(key);
+						else draft.images.push(key);
+					} else {
+						if (exercise) draft.exercises[exerciseIdx].videos.push(key);
+						else draft.videos.push(key);
+					}
 				}),
 			);
 		} catch {
 			notifications.show({
 				color: "red",
-				message: "Error while uploading image",
+				message: `Error while uploading ${type}`,
 			});
 		} finally {
 			setIsFileUploading(false);
@@ -1361,6 +1383,41 @@ const UploadAssetsModal = (props: {
 		enabled: exercise !== null,
 	});
 
+	const imagesToDisplay = isString(props.modalOpenedBy)
+		? exercise?.images || []
+		: currentWorkout.images;
+
+	const videosToDisplay = isString(props.modalOpenedBy)
+		? exercise?.videos || []
+		: currentWorkout.videos;
+
+	const hasAssets = imagesToDisplay.length > 0 || videosToDisplay.length > 0;
+
+	const onRemoveAsset = (key: string, type: "image" | "video") => {
+		deleteUploadedAsset(key);
+		setCurrentWorkout(
+			produce(currentWorkout, (draft) => {
+				if (type === "image") {
+					if (exerciseIdx !== -1) {
+						draft.exercises[exerciseIdx].images = draft.exercises[
+							exerciseIdx
+						].images.filter((i) => i !== key);
+					} else {
+						draft.images = draft.images.filter((i) => i !== key);
+					}
+					return;
+				}
+				if (exerciseIdx !== -1) {
+					draft.exercises[exerciseIdx].videos = draft.exercises[
+						exerciseIdx
+					].videos.filter((i) => i !== key);
+				} else {
+					draft.videos = draft.videos.filter((i) => i !== key);
+				}
+			}),
+		);
+	};
+
 	return (
 		<Modal
 			onClose={() => props.closeModal()}
@@ -1370,49 +1427,31 @@ const UploadAssetsModal = (props: {
 			<Stack>
 				{fileUploadAllowed ? (
 					<>
-						{isString(props.modalOpenedBy) ? (
-							exercise && exercise.images.length > 0 ? (
-								<Avatar.Group spacing="xs">
-									{exercise.images.map((i, imgIdx) => (
-										<ImageDisplay
-											key={i.key}
-											imageSrc={i.imageSrc}
-											removeImage={() => {
-												deleteUploadedAsset(i.key);
-												setCurrentWorkout(
-													produce(currentWorkout, (draft) => {
-														const images = draft.exercises[exerciseIdx].images;
-														images.splice(imgIdx, 1);
-														draft.exercises[exerciseIdx].images = images;
-													}),
-												);
-											}}
-										/>
-									))}
-								</Avatar.Group>
-							) : null
-						) : currentWorkout.images.length > 0 ? (
+						{hasAssets ? (
 							<Avatar.Group spacing="xs">
-								{currentWorkout.images.map((i, imgIdx) => (
-									<ImageDisplay
-										key={i.key}
-										imageSrc={i.imageSrc}
-										removeImage={() => {
-											deleteUploadedAsset(i.key);
-											setCurrentWorkout(
-												produce(currentWorkout, (draft) => {
-													const images = draft.images;
-													images.splice(imgIdx, 1);
-													draft.images = images;
-												}),
-											);
-										}}
+								{imagesToDisplay.map((i) => (
+									<AssetDisplay
+										key={i}
+										s3Key={i}
+										type="image"
+										removeAsset={() => onRemoveAsset(i, "image")}
+									/>
+								))}
+								{videosToDisplay.map((i) => (
+									<AssetDisplay
+										key={i}
+										s3Key={i}
+										type="video"
+										removeAsset={() => onRemoveAsset(i, "video")}
 									/>
 								))}
 							</Avatar.Group>
 						) : null}
 						<Group justify="space-between">
-							<FileButton accept="image/*" onChange={afterFileSelected}>
+							<FileButton
+								accept="image/*"
+								onChange={(file) => afterFileSelected(file, "image")}
+							>
 								{(props) => (
 									<Button
 										{...props}
@@ -1422,14 +1461,13 @@ const UploadAssetsModal = (props: {
 										loading={isFileUploading}
 										leftSection={<IconLibraryPhoto />}
 									>
-										Select picture
+										Image
 									</Button>
 								)}
 							</FileButton>
 							<FileButton
-								accept="image/*"
-								capture="environment"
-								onChange={afterFileSelected}
+								accept="video/*"
+								onChange={(file) => afterFileSelected(file, "video")}
 							>
 								{(props) => (
 									<Button
@@ -1438,9 +1476,9 @@ const UploadAssetsModal = (props: {
 										color="cyan"
 										variant="outline"
 										loading={isFileUploading}
-										leftSection={<IconCamera />}
+										leftSection={<IconVideo />}
 									>
-										Take picture
+										Video
 									</Button>
 								)}
 							</FileButton>
@@ -1478,7 +1516,6 @@ const ExerciseDisplay = (props: {
 	const { isCreatingTemplate } = useLoaderData<typeof loader>();
 	const theme = useMantineTheme();
 	const userPreferences = useUserPreferences();
-	const unitSystem = useUserUnitSystem();
 	const navigate = useNavigate();
 	const [parent] = useAutoAnimate();
 	const [currentWorkout, setCurrentWorkout] = useCurrentWorkout();
@@ -1486,7 +1523,6 @@ const ExerciseDisplay = (props: {
 	const exercise = useGetExerciseAtIndex(props.exerciseIdx);
 	invariant(exercise);
 	const coreDetails = useCoreDetails();
-	const [detailsParent] = useAutoAnimate();
 	const { data: exerciseDetails } = useQuery(
 		getExerciseDetailsQuery(exercise.exerciseId),
 	);
@@ -1496,15 +1532,20 @@ const ExerciseDisplay = (props: {
 	const [activeHistoryIdx, setActiveHistoryIdx] = useState(0);
 	const { isOnboardingTourInProgress, advanceOnboardingTourStep } =
 		useOnboardingTour();
+	const [
+		isDetailsModalOpen,
+		{ open: openDetailsModal, close: closeDetailsModal },
+	] = useDisclosure(false);
 
 	const playAddSetSound = () => {
 		const sound = new Howl({ src: ["/add-set.mp3"] });
 		if (!userPreferences.fitness.logging.muteSounds) sound.play();
 	};
 
+	const selectedUnitSystem = exercise.unitSystem;
+	const exerciseHistory = userExerciseDetails?.history;
 	const isOnboardingTourStep =
 		isOnboardingTourInProgress && props.exerciseIdx === 0;
-	const exerciseHistory = userExerciseDetails?.history;
 	const [durationCol, distanceCol, weightCol, repsCol] = match(exercise.lot)
 		.with(ExerciseLot.Reps, () => [false, false, false, true])
 		.with(ExerciseLot.Duration, () => [true, false, false, false])
@@ -1530,6 +1571,7 @@ const ExerciseDisplay = (props: {
 	const partOfSuperset = currentWorkout.supersets.find((s) =>
 		s.exercises.includes(exercise.identifier),
 	);
+	const images = getExerciseImages(exerciseDetails);
 
 	const didExerciseActivateTimer =
 		currentTimer?.triggeredBy?.exerciseIdentifier === exercise.identifier;
@@ -1544,6 +1586,112 @@ const ExerciseDisplay = (props: {
 
 	return (
 		<>
+			<Modal
+				size="lg"
+				opened={isDetailsModalOpen}
+				onClose={closeDetailsModal}
+				title={
+					<Group gap={4} wrap="nowrap">
+						<Text>Exercise details for</Text>
+						<Anchor
+							component={Link}
+							to={getExerciseDetailsPath(exercise.exerciseId)}
+						>
+							{exerciseDetails?.name || "..."}
+						</Anchor>
+					</Group>
+				}
+			>
+				<FocusTrap.InitialFocus />
+				<Stack>
+					<Select
+						size="sm"
+						label="Unit system"
+						value={selectedUnitSystem}
+						data={Object.values(UserUnitSystem).map((c) => ({
+							value: c,
+							label: startCase(c.toLowerCase()),
+						}))}
+						onChange={(v) => {
+							setCurrentWorkout(
+								produce(currentWorkout, (draft) => {
+									draft.exercises[props.exerciseIdx].unitSystem =
+										v as UserUnitSystem;
+								}),
+							);
+						}}
+					/>
+					<ScrollArea type="scroll">
+						<Group wrap="nowrap">
+							{images.map((i) => (
+								<Image key={i} src={i} h={200} w={350} radius="md" />
+							))}
+						</Group>
+					</ScrollArea>
+					{coreDetails.isServerKeyValidated ? (
+						<Carousel
+							align="start"
+							slideGap="md"
+							withControls={false}
+							style={{ userSelect: "none" }}
+							onSlideChange={setActiveHistoryIdx}
+							slideSize={{ base: "100%", md: "50%" }}
+						>
+							{exerciseHistory?.map((history, idx) => (
+								<Carousel.Slide key={`${history.workoutId}-${history.idx}`}>
+									{getSurroundingElements(
+										exerciseHistory,
+										activeHistoryIdx,
+									).includes(idx) ? (
+										<ExerciseHistory
+											hideExerciseDetails
+											hideExtraDetailsButton
+											exerciseIdx={history.idx}
+											entityId={history.workoutId}
+											entityType={FitnessEntity.Workouts}
+											onCopyButtonClick={async () => {
+												if (!coreDetails.isServerKeyValidated) {
+													notifications.show({
+														color: "red",
+														message:
+															"Ryot Pro required to copy sets from other workouts",
+													});
+													return;
+												}
+												const workout = await getWorkoutDetails(
+													history.workoutId,
+												);
+												openConfirmationModal(
+													`Are you sure you want to copy all sets from "${workout.details.name}"?`,
+													() => {
+														const sets =
+															workout.details.information.exercises[history.idx]
+																.sets;
+														const converted = sets.map((set) =>
+															convertHistorySetToCurrentSet(set),
+														);
+														setCurrentWorkout(
+															produce(currentWorkout, (draft) => {
+																draft.exercises[props.exerciseIdx].sets.push(
+																	...converted,
+																);
+															}),
+														);
+													},
+												);
+											}}
+										/>
+									) : null}
+								</Carousel.Slide>
+							))}
+						</Carousel>
+					) : (
+						<ProRequiredAlert
+							alertText={`${PRO_REQUIRED_MESSAGE}: inline workout history.`}
+						/>
+					)}
+				</Stack>
+			</Modal>
 			<Paper
 				pl="sm"
 				radius={0}
@@ -1561,12 +1709,15 @@ const ExerciseDisplay = (props: {
 					<Menu shadow="md" width={200} position="left-end">
 						<Group justify="space-between" pos="relative" wrap="nowrap">
 							<Anchor
+								c="blue"
 								fw="bold"
 								lineClamp={1}
-								component={Link}
-								to={getExerciseDetailsPath(exercise.exerciseId)}
+								onClick={(e) => {
+									e.preventDefault();
+									openDetailsModal();
+								}}
 							>
-								{exerciseDetails?.name}
+								{exerciseDetails?.name || "Loading..."}
 							</Anchor>
 							<Group wrap="nowrap" mr={-10}>
 								{didExerciseActivateTimer ? (
@@ -1656,24 +1807,6 @@ const ExerciseDisplay = (props: {
 							>
 								Replace exercise
 							</Menu.Item>
-							{exerciseHasDetailsToShow(
-								exerciseDetails,
-								userExerciseDetails,
-							) ? (
-								<Menu.Item
-									leftSection={<IconInfoCircle size={14} />}
-									onClick={() => {
-										setCurrentWorkout(
-											produce(currentWorkout, (draft) => {
-												draft.exercises[props.exerciseIdx].isShowDetailsOpen =
-													!exercise.isShowDetailsOpen;
-											}),
-										);
-									}}
-								>
-									{exercise.isShowDetailsOpen ? "Hide" : "Show"} details
-								</Menu.Item>
-							) : null}
 							<Menu.Item
 								leftSection={<IconReorder size={14} />}
 								onClick={() => props.reorderDrawerToggle(exercise.identifier)}
@@ -1688,8 +1821,8 @@ const ExerciseDisplay = (props: {
 										`This removes '${exerciseDetails?.name}' and all its sets from your workout. You can not undo this action. Are you sure you want to continue?`,
 										() => {
 											const assets = [...exercise.images, ...exercise.videos];
-											for (const asset of assets)
-												deleteUploadedAsset(asset.key);
+											for (const asset of assets) deleteUploadedAsset(asset);
+
 											setCurrentWorkout(
 												produce(currentWorkout, (draft) => {
 													const idx = draft.supersets.findIndex((s) =>
@@ -1726,123 +1859,6 @@ const ExerciseDisplay = (props: {
 									key={`${exercise.identifier}-${idx}`}
 								/>
 							))}
-							{exercise.isShowDetailsOpen ? (
-								<Box ref={detailsParent} pos="relative">
-									{match(exercise.openedDetailsTab)
-										.with("images", undefined, () => (
-											<ScrollArea type="scroll">
-												<Group wrap="nowrap">
-													{exerciseDetails?.attributes.images.map((i) => (
-														<Image
-															key={i}
-															src={i}
-															h={200}
-															w={350}
-															radius="md"
-														/>
-													))}
-												</Group>
-											</ScrollArea>
-										))
-										.with("history", () => (
-											<Carousel
-												align="start"
-												slideGap="md"
-												withControls={false}
-												style={{ userSelect: "none" }}
-												onSlideChange={setActiveHistoryIdx}
-												slideSize={{ base: "100%", md: "50%" }}
-											>
-												{exerciseHistory?.map((history, idx) => (
-													<Carousel.Slide
-														key={`${history.workoutId}-${history.idx}`}
-													>
-														{getSurroundingElements(
-															exerciseHistory,
-															activeHistoryIdx,
-														).includes(idx) ? (
-															<ExerciseHistory
-																hideExerciseDetails
-																hideExtraDetailsButton
-																exerciseIdx={history.idx}
-																entityId={history.workoutId}
-																entityType={FitnessEntity.Workouts}
-																onCopyButtonClick={async () => {
-																	if (false) {
-																		notifications.show({
-																			color: "red",
-																			message:
-																				"Ryot Pro required to copy sets from other workouts",
-																		});
-																		return;
-																	}
-																	const workout = await getWorkoutDetails(
-																		history.workoutId,
-																	);
-																	openConfirmationModal(
-																		`Are you sure you want to copy all sets from "${workout.details.name}"?`,
-																		() => {
-																			const sets =
-																				workout.details.information.exercises[
-																					history.idx
-																				].sets;
-																			const converted = sets.map((set) =>
-																				convertHistorySetToCurrentSet(set),
-																			);
-																			setCurrentWorkout(
-																				produce(currentWorkout, (draft) => {
-																					draft.exercises[
-																						props.exerciseIdx
-																					].sets.push(...converted);
-																				}),
-																			);
-																		},
-																	);
-																}}
-															/>
-														) : null}
-													</Carousel.Slide>
-												))}
-											</Carousel>
-										))
-										.exhaustive()}
-									{(userExerciseDetails?.history?.length || 0) > 0 ? (
-										<ActionIcon
-											p={2}
-											size="sm"
-											right={10}
-											bottom={10}
-											color="red"
-											pos="absolute"
-											variant="filled"
-											onClick={() => {
-												if (false) {
-													notifications.show({
-														color: "red",
-														message: PRO_REQUIRED_MESSAGE,
-													});
-													return;
-												}
-												setCurrentWorkout(
-													produce(currentWorkout, (draft) => {
-														draft.exercises[
-															props.exerciseIdx
-														].openedDetailsTab =
-															exercise.openedDetailsTab === "images"
-																? "history"
-																: "images";
-													}),
-												);
-											}}
-										>
-											{match(exercise.openedDetailsTab)
-												.with("images", undefined, () => <IconPhoto />)
-												.with("history", () => <IconClock />)
-												.exhaustive()}
-										</ActionIcon>
-									) : null}
-								</Box>
-							) : null}
 							<Flex justify="space-between" align="center">
 								<Text size="xs" w="5%" ta="center">
 									SET
@@ -1862,7 +1878,7 @@ const ExerciseDisplay = (props: {
 								{distanceCol ? (
 									<Text size="xs" style={{ flex: 1 }} ta="center">
 										DISTANCE (
-										{match(unitSystem)
+										{match(selectedUnitSystem)
 											.with(UserUnitSystem.Metric, () => "KM")
 											.with(UserUnitSystem.Imperial, () => "MI")
 											.exhaustive()}
@@ -1872,7 +1888,7 @@ const ExerciseDisplay = (props: {
 								{weightCol ? (
 									<Text size="xs" style={{ flex: 1 }} ta="center">
 										WEIGHT (
-										{match(unitSystem)
+										{match(selectedUnitSystem)
 											.with(UserUnitSystem.Metric, () => "KG")
 											.with(UserUnitSystem.Imperial, () => "LB")
 											.exhaustive()}
@@ -2279,10 +2295,11 @@ const SetDisplay = (props: {
 								style={{ cursor: "pointer" }}
 							>
 								<DisplaySetStatistics
-									statistic={exercise.alreadyDoneSets[props.setIdx].statistic}
-									lot={exercise.lot}
 									hideExtras
 									centerText
+									lot={exercise.lot}
+									unitSystem={exercise.unitSystem}
+									statistic={exercise.alreadyDoneSets[props.setIdx].statistic}
 								/>
 							</Box>
 						) : (

@@ -20,7 +20,6 @@ import {
 } from "@ryot/generated/graphql/backend/graphql";
 import {
 	getInitials,
-	isString,
 	parseSearchQuery,
 	truncate,
 	zodIntAsString,
@@ -67,15 +66,15 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
 	await redirectUsingEnhancedCookieSearchParams(request, cookieName);
 	const query = parseSearchQuery(request, searchParamsSchema);
 	const [{ genresList }] = await Promise.all([
-		serverGqlService.request(GenresListDocument, {
+		serverGqlService.authenticatedRequest(request, GenresListDocument, {
 			input: { page: query[pageQueryParam], query: query.query },
 		}),
 	]);
-	const totalPages = await redirectToFirstPageIfOnInvalidPage(
+	const totalPages = await redirectToFirstPageIfOnInvalidPage({
 		request,
-		genresList.details.total,
-		query[pageQueryParam],
-	);
+		currentPage: query[pageQueryParam],
+		totalResults: genresList.details.total,
+	});
 	return { query, genresList, cookieName, totalPages };
 };
 
@@ -144,10 +143,10 @@ const DisplayGenre = (props: { genreId: string }) => {
 			let images = [];
 			for (const content of genreDetails.contents.items) {
 				if (images.length === 4) break;
-				const { image } = await queryClient.ensureQueryData(
+				const { assets } = await queryClient.ensureQueryData(
 					getPartialMetadataDetailsQuery(content),
 				);
-				if (isString(image)) images.push(image);
+				if (assets.remoteImages.length > 0) images.push(assets.remoteImages[0]);
 			}
 			if (images.length < 4) images = images.splice(0, 1);
 			return { genreDetails, images };

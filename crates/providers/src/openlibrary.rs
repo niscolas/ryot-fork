@@ -2,15 +2,15 @@ use anyhow::{Result, anyhow};
 use application_utils::get_base_http_client;
 use async_trait::async_trait;
 use chrono::{Datelike, NaiveDate};
-use common_models::{PersonSourceSpecifics, SearchDetails};
+use common_models::{EntityAssets, PersonSourceSpecifics, SearchDetails};
 use common_utils::{PAGE_SIZE, ryot_log};
 use convert_case::{Case, Casing};
-use dependent_models::{MetadataPersonRelated, PeopleSearchResponse, PersonDetails, SearchResults};
+use dependent_models::{MetadataPersonRelated, PersonDetails, SearchResults};
 use enum_models::{MediaLot, MediaSource};
 use itertools::Itertools;
 use media_models::{
-    BookSpecifics, MetadataDetails, MetadataImageForMediaDetails, MetadataSearchItem,
-    PartialMetadataPerson, PartialMetadataWithoutId, PeopleSearchItem,
+    BookSpecifics, MetadataDetails, MetadataSearchItem, PartialMetadataPerson,
+    PartialMetadataWithoutId, PeopleSearchItem,
 };
 use reqwest::Client;
 use scraper::{Html, Selector};
@@ -161,9 +161,9 @@ impl MediaProvider for OpenlibraryService {
         &self,
         query: &str,
         page: Option<i32>,
-        _source_specifics: &Option<PersonSourceSpecifics>,
         _display_nsfw: bool,
-    ) -> Result<PeopleSearchResponse> {
+        _source_specifics: &Option<PersonSourceSpecifics>,
+    ) -> Result<SearchResults<PeopleSearchItem>> {
         let page = page.unwrap_or(1);
         let rsp = self
             .client
@@ -256,6 +256,7 @@ impl MediaProvider for OpenlibraryService {
                         lot: MediaLot::Book,
                         identifier: get_key(&entry.key),
                         source: MediaSource::Openlibrary,
+                        ..Default::default()
                     },
                     ..Default::default()
                 })
@@ -267,7 +268,6 @@ impl MediaProvider for OpenlibraryService {
             description,
             related_metadata,
             name: name.clone(),
-            images: Some(images),
             identifier: identifier.clone(),
             source: MediaSource::Openlibrary,
             birth_date: data.birth_date.and_then(|b| parse_date(&b)),
@@ -279,6 +279,10 @@ impl MediaProvider for OpenlibraryService {
             website: data
                 .links
                 .and_then(|l| l.first().and_then(|a| a.url.clone())),
+            assets: EntityAssets {
+                remote_images: images,
+                ..Default::default()
+            },
             ..Default::default()
         })
     }
@@ -356,12 +360,10 @@ impl MediaProvider for OpenlibraryService {
             images.push(c);
         }
 
-        let images = images
+        let remote_images = images
             .into_iter()
             .filter(|c| c > &0)
-            .map(|c| MetadataImageForMediaDetails {
-                image: self.get_book_cover_image_url(c),
-            })
+            .map(|c| self.get_book_cover_image_url(c))
             .unique()
             .collect();
 
@@ -431,6 +433,7 @@ impl MediaProvider for OpenlibraryService {
                     title: name,
                     lot: MediaLot::Book,
                     source: MediaSource::Openlibrary,
+                    ..Default::default()
                 });
             }
         }
@@ -440,7 +443,6 @@ impl MediaProvider for OpenlibraryService {
             genres,
             description,
             suggestions,
-            url_images: images,
             lot: MediaLot::Book,
             title: data.title.clone(),
             identifier: identifier.clone(),
@@ -454,6 +456,10 @@ impl MediaProvider for OpenlibraryService {
                 pages: Some(num_pages),
                 ..Default::default()
             }),
+            assets: EntityAssets {
+                remote_images,
+                ..Default::default()
+            },
             ..Default::default()
         })
     }

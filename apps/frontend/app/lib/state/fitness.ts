@@ -1,11 +1,13 @@
 import {
 	type CreateOrUpdateUserWorkoutMutationVariables,
 	ExerciseDetailsDocument,
+	type ExerciseDetailsQuery,
 	type ExerciseLot,
 	SetLot,
 	type SetRestTimersSettings,
 	UserExerciseDetailsDocument,
 	type UserFitnessPreferences,
+	type UserUnitSystem,
 	UserWorkoutDetailsDocument,
 	type UserWorkoutDetailsQuery,
 	type UserWorkoutSetRecord,
@@ -33,7 +35,6 @@ import {
 	queryClient,
 	queryFactory,
 } from "~/lib/common";
-import type { useCoreDetails } from "../hooks";
 
 export type ExerciseSet = {
 	lot: SetLot;
@@ -49,20 +50,19 @@ export type ExerciseSet = {
 
 type AlreadyDoneExerciseSet = Pick<ExerciseSet, "statistic">;
 
-type Media = { imageSrc: string; key: string };
+type S3Key = string;
 
 export type Exercise = {
 	lot: ExerciseLot;
 	identifier: string;
 	exerciseId: string;
 	notes: Array<string>;
-	videos: Array<Media>;
-	images: Array<Media>;
+	videos: Array<S3Key>;
+	images: Array<S3Key>;
 	isCollapsed?: boolean;
 	sets: Array<ExerciseSet>;
-	isShowDetailsOpen: boolean;
 	scrollMarginRemoved?: true;
-	openedDetailsTab?: "images" | "history";
+	unitSystem: UserUnitSystem;
 	alreadyDoneSets: Array<AlreadyDoneExerciseSet>;
 };
 
@@ -77,8 +77,8 @@ export type InProgressWorkout = {
 	endTime?: string;
 	startTime: string;
 	templateId?: string;
-	images: Array<Media>;
-	videos: Array<string>;
+	images: Array<S3Key>;
+	videos: Array<S3Key>;
 	repeatedFrom?: string;
 	supersets: Superset[];
 	caloriesBurnt?: number;
@@ -218,8 +218,10 @@ export const currentWorkoutToCreateWorkoutInput = (
 			updateWorkoutTemplateId: currentWorkout.updateWorkoutTemplateId,
 			startTime: new Date(currentWorkout.startTime).toISOString(),
 			assets: {
-				videos: [...currentWorkout.videos],
-				images: currentWorkout.images.map((m) => m.key),
+				remoteImages: [],
+				remoteVideos: [],
+				s3Videos: currentWorkout.videos,
+				s3Images: currentWorkout.images,
 			},
 		},
 	};
@@ -245,16 +247,18 @@ export const currentWorkoutToCreateWorkoutInput = (
 		if (!isCreatingTemplate && sets.length === 0) continue;
 		const notes = Array<string>();
 		for (const note of exercise.notes) if (note) notes.push(note);
-		const toAdd = {
+		input.input.exercises.push({
 			sets,
 			notes,
+			unitSystem: exercise.unitSystem,
 			exerciseId: exercise.exerciseId,
 			assets: {
-				images: exercise.images.map((m) => m.key),
-				videos: exercise.videos.map((m) => m.key),
+				remoteImages: [],
+				remoteVideos: [],
+				s3Images: exercise.images,
+				s3Videos: exercise.videos,
 			},
-		};
-		input.input.exercises.push(toAdd);
+		});
 	}
 	return input;
 };
@@ -298,8 +302,6 @@ export const duplicateOldWorkout = async (
 	fitnessEntity: FitnessAction,
 	caloriesBurnt: number | undefined,
 	workoutInformation: WorkoutInformation,
-	coreDetails: ReturnType<typeof useCoreDetails>,
-	userFitnessPreferences: UserFitnessPreferences,
 	params: {
 		templateId?: string;
 		repeatedFromId?: string;
@@ -322,7 +324,6 @@ export const duplicateOldWorkout = async (
 				params.updateWorkoutId ? v.confirmedAt : undefined,
 			),
 		);
-		const exerciseDetails = await getExerciseDetails(ex.id);
 		inProgress.exercises.push({
 			images: [],
 			videos: [],
@@ -331,13 +332,8 @@ export const duplicateOldWorkout = async (
 			notes: ex.notes,
 			exerciseId: ex.id,
 			identifier: randomUUID(),
-			isShowDetailsOpen: userFitnessPreferences.logging.showDetailsWhileEditing,
+			unitSystem: ex.unitSystem,
 			alreadyDoneSets: sets.map((s) => ({ statistic: s.statistic })),
-			openedDetailsTab: false
-				? "images"
-				: (exerciseDetails.userDetails.history?.length || 0) > 0
-					? "history"
-					: "images",
 		});
 	}
 	const supersets = workoutInformation.supersets.map((sup) => ({
@@ -410,22 +406,27 @@ export const addExerciseToCurrentWorkout = async (
 			alreadyDoneSets = sets.map((s) => ({ statistic: s.statistic }));
 		}
 		draft.exercises.push({
-			identifier: randomUUID(),
-			isShowDetailsOpen: userFitnessPreferences.logging.showDetailsWhileEditing,
-			exerciseId: ex.name,
-			lot: ex.lot,
 			sets,
-			alreadyDoneSets,
 			notes: [],
 			images: [],
 			videos: [],
-			openedDetailsTab:
-				(exerciseDetails.userDetails.history?.length || 0) > 0
-					? "history"
-					: "images",
+			lot: ex.lot,
+			alreadyDoneSets,
+			exerciseId: ex.name,
+			identifier: randomUUID(),
+			unitSystem: userFitnessPreferences.exercises.unitSystem,
 		});
 	}
 	const finishedDraft = finishDraft(draft);
 	setCurrentWorkout(finishedDraft);
 	navigate($path("/fitness/:action", { action: currentWorkout.currentAction }));
+};
+
+export const getExerciseImages = (
+	exercise?: ExerciseDetailsQuery["exerciseDetails"],
+) => {
+	return [
+		...(exercise?.attributes.assets.s3Images || []),
+		...(exercise?.attributes.assets.remoteImages || []),
+	];
 };

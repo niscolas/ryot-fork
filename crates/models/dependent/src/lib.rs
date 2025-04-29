@@ -4,9 +4,10 @@ use async_graphql::{Enum, InputObject, InputType, OutputType, SimpleObject, Unio
 use chrono::NaiveDate;
 use common_models::{
     ApplicationDateRange, BackendError, DailyUserActivitiesResponseGroupedBy,
-    DailyUserActivityHourRecord, MetadataGroupSearchInput, MetadataRecentlyConsumedCacheInput,
-    MetadataSearchInput, PeopleSearchInput, PersonSourceSpecifics, ProgressUpdateCacheInput,
-    SearchDetails, SearchInput, UserAnalyticsInput, UserLevelCacheKey, YoutubeMusicSongListened,
+    DailyUserActivityHourRecord, EntityAssets, MetadataGroupSearchInput,
+    MetadataRecentlyConsumedCacheInput, MetadataSearchInput, PeopleSearchInput,
+    PersonSourceSpecifics, ProgressUpdateCacheInput, SearchDetails, SearchInput,
+    UserAnalyticsInput, UserLevelCacheKey, YoutubeMusicSongListened,
 };
 use config::FrontendConfig;
 use database_models::{
@@ -24,13 +25,12 @@ use fitness_models::{
 use importer_models::ImportFailedItem;
 use media_models::{
     CollectionContentsFilter, CollectionContentsSortBy, CollectionItem,
-    CreateOrUpdateCollectionInput, EntityWithLot, GenreListItem, GraphqlMediaAssets,
-    GraphqlSortOrder, ImportOrExportExerciseItem, ImportOrExportMetadataGroupItem,
-    ImportOrExportMetadataItem, ImportOrExportPersonItem, MediaFilter, MediaSortBy,
-    MetadataCreatorGroupedByRole, MetadataGroupSearchItem, MetadataSearchItem,
-    PartialMetadataWithoutId, PeopleSearchItem, PersonAndMetadataGroupsSortBy,
-    PersonDetailsGroupedByRole, ReviewItem, UserDetailsError, UserMediaNextEntry,
-    UserMetadataDetailsEpisodeProgress, UserMetadataDetailsShowSeasonProgress,
+    CreateOrUpdateCollectionInput, EntityWithLot, GenreListItem, GraphqlSortOrder,
+    ImportOrExportExerciseItem, ImportOrExportMetadataGroupItem, ImportOrExportMetadataItem,
+    ImportOrExportPersonItem, MediaFilter, MediaSortBy, MetadataCreatorGroupedByRole,
+    PartialMetadataWithoutId, PersonAndMetadataGroupsSortBy, PersonDetailsGroupedByRole,
+    ReviewItem, UserDetailsError, UserMediaNextEntry, UserMetadataDetailsEpisodeProgress,
+    UserMetadataDetailsShowSeasonProgress,
 };
 use rust_decimal::Decimal;
 use schematic::Schematic;
@@ -44,15 +44,6 @@ use uuid::Uuid;
 #[graphql(concrete(
     name = "MediaCollectionContentsResults",
     params(media_models::EntityWithLot)
-))]
-#[graphql(concrete(
-    name = "MetadataSearchResults",
-    params(media_models::MetadataSearchItem)
-))]
-#[graphql(concrete(name = "PeopleSearchResults", params(media_models::PeopleSearchItem)))]
-#[graphql(concrete(
-    name = "MetadataGroupSearchResults",
-    params(media_models::MetadataGroupSearchItem)
 ))]
 #[graphql(concrete(name = "IdResults", params(String)))]
 pub struct SearchResults<T: OutputType> {
@@ -165,12 +156,12 @@ pub struct PersonDetails {
     pub name: String,
     pub identifier: String,
     pub source: MediaSource,
+    pub assets: EntityAssets,
     pub place: Option<String>,
     pub gender: Option<String>,
     pub website: Option<String>,
     pub source_url: Option<String>,
     pub description: Option<String>,
-    pub images: Option<Vec<String>>,
     pub death_date: Option<NaiveDate>,
     pub birth_date: Option<NaiveDate>,
     pub alternate_names: Option<Vec<String>>,
@@ -225,7 +216,6 @@ pub struct MetadataBaseData {
     pub model: metadata::Model,
     pub suggestions: Vec<String>,
     pub genres: Vec<GenreListItem>,
-    pub assets: GraphqlMediaAssets,
     pub creators: Vec<MetadataCreatorGroupedByRole>,
 }
 
@@ -260,6 +250,12 @@ pub struct CollectionContentsInput {
     pub search: Option<SearchInput>,
     pub filter: Option<CollectionContentsFilter>,
     pub sort: Option<SortInput<CollectionContentsSortBy>>,
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Serialize, Deserialize, InputObject)]
+pub struct CollectionRecommendationsInput {
+    pub collection_id: String,
+    pub search: Option<SearchInput>,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Serialize, Deserialize, InputObject, Clone, Default)]
@@ -345,15 +341,19 @@ pub struct CoreDetails {
 
 #[derive(SimpleObject)]
 pub struct UserPersonDetails {
+    pub has_interacted: bool,
     pub reviews: Vec<ReviewItem>,
     pub is_recently_consumed: bool,
+    pub average_rating: Option<Decimal>,
     pub collections: Vec<collection::Model>,
 }
 
 #[derive(SimpleObject)]
 pub struct UserMetadataGroupDetails {
+    pub has_interacted: bool,
     pub reviews: Vec<ReviewItem>,
     pub is_recently_consumed: bool,
+    pub average_rating: Option<Decimal>,
     pub collections: Vec<collection::Model>,
 }
 
@@ -532,6 +532,12 @@ pub struct EmptyCacheValue {
 }
 
 #[skip_serializing_none]
+#[derive(Clone, Hash, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionRecommendationsCachedInput {
+    pub collection_id: String,
+}
+
+#[skip_serializing_none]
 #[derive(
     Eq,
     Hash,
@@ -550,6 +556,7 @@ pub enum ApplicationCacheKey {
     IgdbSettings,
     TmdbSettings,
     ListennotesSettings,
+    TrendingMetadataIds,
     UserCollectionsList(UserLevelCacheKey<()>),
     UserAnalyticsParameters(UserLevelCacheKey<()>),
     UserMetadataRecommendations(UserLevelCacheKey<()>),
@@ -560,6 +567,7 @@ pub enum ApplicationCacheKey {
     UserPeopleList(UserLevelCacheKey<UserPeopleListInput>),
     UserMetadataList(UserLevelCacheKey<UserMetadataListInput>),
     UserExercisesList(UserLevelCacheKey<UserExercisesListInput>),
+    CollectionRecommendations(CollectionRecommendationsCachedInput),
     MetadataGroupSearch(UserLevelCacheKey<MetadataGroupSearchInput>),
     ProgressUpdateCache(UserLevelCacheKey<ProgressUpdateCacheInput>),
     UserCollectionContents(UserLevelCacheKey<CollectionContentsInput>),
@@ -573,19 +581,21 @@ pub enum ApplicationCacheKey {
 pub type IgdbSettings = String;
 pub type YoutubeMusicSongListenedResponse = bool;
 pub type ApplicationRecommendations = Vec<String>;
+pub type TrendingMetadataIdsResponse = Vec<String>;
 pub type ListennotesSettings = HashMap<i32, String>;
+pub type PeopleSearchResponse = SearchResults<String>;
+pub type MetadataSearchResponse = SearchResults<String>;
 pub type UserPeopleListResponse = SearchResults<String>;
+pub type CollectionRecommendationsResponse = Vec<String>;
 pub type CollectionContentsResponse = CollectionContents;
 pub type UserWorkoutsListResponse = SearchResults<String>;
 pub type UserMetadataListResponse = SearchResults<String>;
 pub type UserCollectionsListResponse = Vec<CollectionItem>;
 pub type UserExercisesListResponse = SearchResults<String>;
 pub type UserMetadataRecommendationsResponse = Vec<String>;
-pub type PeopleSearchResponse = SearchResults<PeopleSearchItem>;
+pub type MetadataGroupSearchResponse = SearchResults<String>;
 pub type UserMetadataGroupsListResponse = SearchResults<String>;
 pub type UserWorkoutsTemplatesListResponse = SearchResults<String>;
-pub type MetadataSearchResponse = SearchResults<MetadataSearchItem>;
-pub type MetadataGroupSearchResponse = SearchResults<MetadataGroupSearchItem>;
 
 #[derive(Clone, Debug, PartialEq, FromJsonQueryResult, Serialize, Deserialize, Eq)]
 pub enum ApplicationCacheValue {
@@ -603,6 +613,7 @@ pub enum ApplicationCacheValue {
     UserMetadataList(UserMetadataListResponse),
     UserExercisesList(UserExercisesListResponse),
     UserAnalyticsParameters(ApplicationDateRange),
+    TrendingMetadataIds(TrendingMetadataIdsResponse),
     UserCollectionsList(UserCollectionsListResponse),
     MetadataGroupSearch(MetadataGroupSearchResponse),
     UserMetadataGroupsList(UserMetadataGroupsListResponse),
@@ -610,6 +621,7 @@ pub enum ApplicationCacheValue {
     YoutubeMusicSongListened(YoutubeMusicSongListenedResponse),
     UserMetadataRecommendationsSet(ApplicationRecommendations),
     UserWorkoutTemplatesList(UserWorkoutsTemplatesListResponse),
+    CollectionRecommendations(CollectionRecommendationsResponse),
     UserMetadataRecommendations(UserMetadataRecommendationsResponse),
 }
 

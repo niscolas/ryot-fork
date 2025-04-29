@@ -5,6 +5,7 @@ import {
 import { type MantineColor, Text } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import {
+	type CollectionRecommendationsInput,
 	type MediaCollectionFilter,
 	type MediaCollectionPresenceFilter,
 	MediaLot,
@@ -12,6 +13,7 @@ import {
 	MetadataDetailsDocument,
 	MetadataGroupDetailsDocument,
 	MetadataPartialDetailsDocument,
+	PresignedPutS3UrlDocument,
 	SetLot,
 	type UserAnalyticsQueryVariables,
 	UserMetadataDetailsDocument,
@@ -391,11 +393,20 @@ const mediaQueryKeys = createQueryKeys("media", {
 	genreImages: (genreId: string) => ({
 		queryKey: ["genreDetails", "images", genreId],
 	}),
+	trendingMetadata: () => ({
+		queryKey: ["trendingMetadata"],
+	}),
+	userMetadataRecommendations: () => ({
+		queryKey: ["userMetadataRecommendations"],
+	}),
 });
 
 const collectionQueryKeys = createQueryKeys("collections", {
 	images: (collectionId: string) => ({
 		queryKey: ["collectionDetails", "images", collectionId],
+	}),
+	recommendations: (input: CollectionRecommendationsInput) => ({
+		queryKey: ["collectionRecommendations", input],
 	}),
 });
 
@@ -414,24 +425,20 @@ const fitnessQueryKeys = createQueryKeys("fitness", {
 	}),
 });
 
-const userQueryKeys = createQueryKeys("user", {
-	userPendingNotifications: () => ({
-		queryKey: ["userPendingNotifications"],
+const miscellaneousQueryKeys = createQueryKeys("miscellaneous", {
+	userAnalytics: (input: UserAnalyticsQueryVariables) => ({
+		queryKey: ["userAnalytics", input],
 	}),
-});
-
-const analyticsQueryKeys = createQueryKeys("analytics", {
-	user: (input: UserAnalyticsQueryVariables) => ({
-		queryKey: ["user", input],
+	presignedS3Url: (key: string) => ({
+		queryKey: ["presignedS3Url", key],
 	}),
 });
 
 export const queryFactory = mergeQueryKeys(
-	userQueryKeys,
 	mediaQueryKeys,
 	fitnessQueryKeys,
-	analyticsQueryKeys,
 	collectionQueryKeys,
+	miscellaneousQueryKeys,
 );
 
 export const getPartialMetadataDetailsQuery = (metadataId: string) =>
@@ -483,10 +490,16 @@ export const getTimeOfDay = (hours: number) => {
 	return "Night";
 };
 
-export const refreshUserMetadataDetails = (metadataId: string) =>
+export const refreshEntityDetails = (entityId: string) =>
 	setTimeout(() => {
 		queryClient.invalidateQueries({
-			queryKey: queryFactory.media.userMetadataDetails(metadataId).queryKey,
+			queryKey: queryFactory.media.userMetadataDetails(entityId).queryKey,
+		});
+		queryClient.invalidateQueries({
+			queryKey: queryFactory.media.userMetadataGroupDetails(entityId).queryKey,
+		});
+		queryClient.invalidateQueries({
+			queryKey: queryFactory.media.userPersonDetails(entityId).queryKey,
 		});
 	}, 1500);
 
@@ -562,3 +575,17 @@ export const getStartTimeFromRange = (range: ApplicationTimeRange) =>
 			() => undefined,
 		)
 		.exhaustive();
+
+export const clientSideFileUpload = async (file: File, prefix: string) => {
+	const body = await file.arrayBuffer();
+	const { presignedPutS3Url } = await clientGqlService.request(
+		PresignedPutS3UrlDocument,
+		{ input: { fileName: file.name, prefix } },
+	);
+	await fetch(presignedPutS3Url.uploadUrl, {
+		method: "PUT",
+		body,
+		headers: { "Content-Type": file.type },
+	});
+	return presignedPutS3Url.key;
+};

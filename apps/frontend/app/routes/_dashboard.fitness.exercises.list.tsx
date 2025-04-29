@@ -80,6 +80,7 @@ import {
 import {
 	addExerciseToCurrentWorkout,
 	getExerciseDetailsQuery,
+	getExerciseImages,
 	getUserExerciseDetailsQuery,
 	useCurrentWorkout,
 	useMergingExercise,
@@ -154,11 +155,11 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
 			},
 		),
 	]);
-	const totalPages = await redirectToFirstPageIfOnInvalidPage(
+	const totalPages = await redirectToFirstPageIfOnInvalidPage({
 		request,
-		userExercisesList.response.details.total,
-		query[pageQueryParam],
-	);
+		currentPage: query[pageQueryParam],
+		totalResults: userExercisesList.response.details.total,
+	});
 	return { query, totalPages, cookieName, userExercisesList };
 };
 
@@ -442,6 +443,7 @@ const ExerciseItemDisplay = (props: {
 		userExerciseDetails?.details?.exerciseNumTimesInteracted;
 	const lastUpdatedOn = userExerciseDetails?.details?.lastUpdatedOn;
 	const isTourTargetExercise = props.exerciseId === TOUR_EXERCISE_TARGET_ID;
+	const images = getExerciseImages(exercise);
 
 	return (
 		<Box
@@ -481,8 +483,8 @@ const ExerciseItemDisplay = (props: {
 						<Avatar
 							size="lg"
 							radius="xl"
+							src={images.at(0)}
 							imageProps={{ loading: "lazy" }}
-							src={exercise.attributes.images[0]}
 						/>
 					</Indicator>
 					<Link

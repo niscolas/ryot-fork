@@ -2,6 +2,7 @@ import { useAutoAnimate } from "@formkit/auto-animate/react";
 import { Carousel } from "@mantine/carousel";
 import {
 	ActionIcon,
+	Affix,
 	Alert,
 	Anchor,
 	Avatar,
@@ -27,6 +28,7 @@ import {
 	TextInput,
 	Title,
 	Tooltip,
+	rem,
 	useMantineTheme,
 } from "@mantine/core";
 import {
@@ -37,6 +39,7 @@ import {
 	useListState,
 } from "@mantine/hooks";
 import {
+	type EntityAssets,
 	EntityLot,
 	GridPacking,
 	type MediaCollectionFilter,
@@ -61,6 +64,7 @@ import {
 	IconArrowBigUp,
 	IconArrowsShuffle,
 	IconBarbell,
+	IconCancel,
 	IconCheck,
 	IconEdit,
 	IconExternalLink,
@@ -122,6 +126,10 @@ import {
 	useUserUnitSystem,
 } from "~/lib/hooks";
 import {
+	type BulkAddEntities,
+	useBulkEditCollection,
+} from "~/lib/state/collection";
+import {
 	type OnboardingTourStepTargets,
 	useOnboardingTour,
 } from "~/lib/state/general";
@@ -164,7 +172,7 @@ export const ApplicationGrid = (props: {
 
 export const MediaDetailsLayout = (props: {
 	title: string;
-	images: Array<string | null | undefined>;
+	assets: EntityAssets;
 	children: Array<ReactNode | (ReactNode | undefined)>;
 	externalLink?: {
 		lot?: MediaLot;
@@ -191,6 +199,8 @@ export const MediaDetailsLayout = (props: {
 		},
 	});
 
+	const images = [...props.assets.remoteImages, ...props.assets.s3Images];
+
 	return (
 		<Flex direction={{ base: "column", md: "row" }} gap="lg">
 			<Box
@@ -198,13 +208,11 @@ export const MediaDetailsLayout = (props: {
 				id="images-container"
 				className={classes.imagesContainer}
 			>
-				{props.images.length > 1 ? (
+				{images.length > 1 ? (
 					<Carousel w={300} onSlideChange={setActiveImageId}>
-						{props.images.map((url, idx) => (
+						{images.map((url, idx) => (
 							<Carousel.Slide key={url} data-image-idx={idx}>
-								{getSurroundingElements(props.images, activeImageId).includes(
-									idx,
-								) ? (
+								{getSurroundingElements(images, activeImageId).includes(idx) ? (
 									<Image src={url} radius="lg" />
 								) : null}
 							</Carousel.Slide>
@@ -215,7 +223,7 @@ export const MediaDetailsLayout = (props: {
 						<Image
 							radius="lg"
 							height={400}
-							src={props.images[0]}
+							src={images[0]}
 							fallbackSrc={fallbackImageUrl}
 						/>
 					</Box>
@@ -272,6 +280,7 @@ export const DebouncedSearchInput = (props: {
 	placeholder?: string;
 	initialValue?: string;
 	enhancedQueryParams?: string;
+	onChange?: (query: string) => void;
 	tourControl?: {
 		target: OnboardingTourStepTargets;
 		onQueryChange: (query: string) => void;
@@ -285,6 +294,10 @@ export const DebouncedSearchInput = (props: {
 
 	useDidUpdate(() => {
 		const query = debounced.trim().toLowerCase();
+		if (props.onChange) {
+			props.onChange(query);
+			return;
+		}
 		setP(props.queryParam || "query", query);
 		props.tourControl?.onQueryChange(query);
 	}, [debounced]);
@@ -340,6 +353,7 @@ export const BaseMediaDisplayItem = (props: {
 	nameRight?: ReactNode;
 	imageClassName?: string;
 	imageUrl?: string | null;
+	highlightName?: boolean;
 	highlightImage?: boolean;
 	innerRef?: Ref<HTMLDivElement>;
 	labels?: { right?: ReactNode; left?: ReactNode };
@@ -480,7 +494,12 @@ export const BaseMediaDisplayItem = (props: {
 						</Text>
 					</Flex>
 					<Flex mb="xs" align="center" justify="space-between">
-						<Text w="100%" truncate fw="bold">
+						<Text
+							w="100%"
+							truncate
+							fw="bold"
+							c={props.highlightName ? "yellow" : undefined}
+						>
 							{props.altName ?? props.name}
 						</Text>
 						{props.nameRight}
@@ -745,9 +764,12 @@ export const ReviewItemDisplay = (props: {
 											/>
 											<Text className={classes.text} fw="bold">
 												{props.review.rating}
-												{reviewScale === UserReviewScale.OutOfFive
-													? undefined
-													: "%"}
+												{reviewScale === UserReviewScale.OutOfHundred
+													? "%"
+													: undefined}
+												{reviewScale === UserReviewScale.OutOfTen
+													? "/10"
+													: undefined}
 											</Text>
 										</Flex>
 									))
@@ -956,17 +978,17 @@ export const DisplayCollectionEntity = (props: {
 	match(props.entityLot)
 		.with(EntityLot.Metadata, () => (
 			<MetadataDisplayItem
-				metadataId={props.entityId}
-				topRight={props.topRight}
 				rightLabelLot
+				topRight={props.topRight}
+				metadataId={props.entityId}
 			/>
 		))
 		.with(EntityLot.MetadataGroup, () => (
 			<MetadataGroupDisplayItem
-				metadataGroupId={props.entityId}
-				topRight={props.topRight}
-				rightLabel={changeCase(snakeCase(props.entityLot))}
 				noLeftLabel
+				topRight={props.topRight}
+				metadataGroupId={props.entityId}
+				rightLabel={changeCase(snakeCase(props.entityLot))}
 			/>
 		))
 		.with(EntityLot.Person, () => (
@@ -978,22 +1000,22 @@ export const DisplayCollectionEntity = (props: {
 		))
 		.with(EntityLot.Exercise, () => (
 			<ExerciseDisplayItem
-				exerciseId={props.entityId}
 				topRight={props.topRight}
+				exerciseId={props.entityId}
 				rightLabel={changeCase(snakeCase(props.entityLot))}
 			/>
 		))
 		.with(EntityLot.Workout, () => (
 			<WorkoutDisplayItem
-				workoutId={props.entityId}
 				topRight={props.topRight}
+				workoutId={props.entityId}
 				rightLabel={changeCase(snakeCase(props.entityLot))}
 			/>
 		))
 		.with(EntityLot.WorkoutTemplate, () => (
 			<WorkoutTemplateDisplayItem
-				workoutTemplateId={props.entityId}
 				topRight={props.topRight}
+				workoutTemplateId={props.entityId}
 			/>
 		))
 		.run();
@@ -1413,7 +1435,7 @@ const UnstyledLink = (props: { children: ReactNode; to: string }) => {
 
 export const DisplayListDetailsAndRefresh = (props: {
 	total: number;
-	cacheId: string;
+	cacheId?: string;
 	className?: string;
 	rightSection?: ReactNode;
 }) => {
@@ -1429,36 +1451,44 @@ export const DisplayListDetailsAndRefresh = (props: {
 				item{props.total === 1 ? "" : "s"} found
 				{props.rightSection}
 			</Box>
-			<Form
-				replace
-				method="POST"
-				onSubmit={(e) => submit(e)}
-				action={withQuery($path("/actions"), {
-					intent: "expireCacheKey",
-				})}
-			>
-				<input type="hidden" name="cacheId" value={props.cacheId} />
-				<Button
-					size="xs"
-					type="submit"
-					variant="subtle"
-					className={props.className}
-					onClick={() => advanceOnboardingTourStep()}
-					leftSection={<IconArrowsShuffle size={20} />}
+			{props.cacheId ? (
+				<Form
+					replace
+					method="POST"
+					onSubmit={(e) => submit(e)}
+					action={withQuery($path("/actions"), {
+						intent: "expireCacheKey",
+					})}
 				>
-					Refresh
-				</Button>
-			</Form>
+					<input type="hidden" name="cacheId" value={props.cacheId} />
+					<Button
+						size="xs"
+						type="submit"
+						variant="subtle"
+						className={props.className}
+						onClick={() => advanceOnboardingTourStep()}
+						leftSection={<IconArrowsShuffle size={20} />}
+					>
+						Refresh
+					</Button>
+				</Form>
+			) : null}
 		</Group>
 	);
 };
 
-export const ExpireCacheKeyButton = (props: {
-	cacheId: string;
-	confirmationText?: string;
-}) => {
+export type ExpireCacheKeyButtonProps = {
+	action: {
+		cacheId: string;
+		confirmationText?: string;
+	};
+};
+
+export const ExpireCacheKeyButton = (props: ExpireCacheKeyButtonProps) => {
 	const submit = useConfirmSubmit();
 	const location = useLocation();
+
+	const action = props.action;
 
 	return (
 		<Form
@@ -1469,21 +1499,116 @@ export const ExpireCacheKeyButton = (props: {
 				[redirectToQueryParam]: location.pathname,
 			})}
 		>
-			<input type="hidden" name="cacheId" value={props.cacheId} />
+			<input type="hidden" name="cacheId" value={action.cacheId} />
 			<ActionIcon
 				type="submit"
 				variant="subtle"
 				onClick={(e) => {
-					if (!props.confirmationText) return;
+					if (!action.confirmationText) return;
 					const form = e.currentTarget.form;
 					if (form) {
 						e.preventDefault();
-						openConfirmationModal(props.confirmationText, () => submit(form));
+						openConfirmationModal(action.confirmationText, () => submit(form));
 					}
 				}}
 			>
 				<IconRotateClockwise />
 			</ActionIcon>
 		</Form>
+	);
+};
+
+export const BulkEditingAffix = (props: {
+	bulkAddEntities: BulkAddEntities;
+}) => {
+	const submit = useConfirmSubmit();
+	const bulkEditingCollection = useBulkEditCollection();
+
+	const bulkEditingCollectionState = bulkEditingCollection.state;
+
+	if (!bulkEditingCollectionState) return null;
+
+	return (
+		<Affix position={{ bottom: rem(30) }} w="100%" px="sm">
+			<Form
+				method="POST"
+				action={$path("/actions", { intent: "bulkCollectionAction" })}
+				onSubmit={(e) => {
+					submit(e);
+					bulkEditingCollectionState.stop(true);
+				}}
+			>
+				<input
+					type="hidden"
+					name="action"
+					defaultValue={bulkEditingCollectionState.data.action}
+				/>
+				<input
+					type="hidden"
+					name="collectionName"
+					defaultValue={bulkEditingCollectionState.data.collection.name}
+				/>
+				<input
+					type="hidden"
+					name="creatorUserId"
+					defaultValue={
+						bulkEditingCollectionState.data.collection.creatorUserId
+					}
+				/>
+				{bulkEditingCollectionState.data.entities.map((item, index) => (
+					<Fragment key={JSON.stringify(item)}>
+						<input
+							readOnly
+							type="hidden"
+							value={item.entityId}
+							name={`items[${index}].entityId`}
+						/>
+						<input
+							readOnly
+							type="hidden"
+							value={item.entityLot}
+							name={`items[${index}].entityLot`}
+						/>
+					</Fragment>
+				))}
+				<Paper withBorder shadow="xl" p="md" w={{ md: "40%" }} mx="auto">
+					<Group wrap="nowrap" justify="space-between">
+						<Text fz={{ base: "xs", md: "md" }}>
+							{bulkEditingCollectionState.data.entities.length} items selected
+						</Text>
+						<Group wrap="nowrap">
+							<ActionIcon
+								size="md"
+								onClick={() => bulkEditingCollectionState.stop()}
+							>
+								<IconCancel />
+							</ActionIcon>
+							<Button
+								size="xs"
+								color="blue"
+								loading={bulkEditingCollectionState.data.isLoading}
+								onClick={() =>
+									bulkEditingCollectionState.bulkAdd(props.bulkAddEntities)
+								}
+							>
+								Select all items
+							</Button>
+							<Button
+								size="xs"
+								type="submit"
+								disabled={bulkEditingCollectionState.data.entities.length === 0}
+								color={
+									bulkEditingCollectionState.data.action === "remove"
+										? "red"
+										: "green"
+								}
+							>
+								{changeCase(bulkEditingCollectionState.data.action)}
+							</Button>
+						</Group>
+					</Group>
+				</Paper>
+			</Form>
+		</Affix>
 	);
 };

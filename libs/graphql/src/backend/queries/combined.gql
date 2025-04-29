@@ -76,6 +76,32 @@ query UserIntegrations {
 			error
 			finishedAt
 		}
+		providerSpecifics {
+			plexYankToken
+			plexYankBaseUrl
+			plexSinkUsername
+			audiobookshelfToken
+			audiobookshelfBaseUrl
+			komgaBaseUrl
+			komgaUsername
+			komgaPassword
+			komgaProvider
+			radarrBaseUrl
+			radarrApiKey
+			radarrProfileId
+			radarrRootFolderPath
+			radarrSyncCollectionIds
+			sonarrProfileId
+			sonarrApiKey
+			sonarrBaseUrl
+			sonarrRootFolderPath
+			sonarrSyncCollectionIds
+			jellyfinPushBaseUrl
+			jellyfinPushUsername
+			jellyfinPushPassword
+			youtubeMusicTimezone
+			youtubeMusicAuthCookie
+		}
 	}
 }
 
@@ -126,8 +152,10 @@ query MetadataPartialDetails($metadataId: String!) {
 		id
 		lot
 		title
-		image
 		publishYear
+		assets {
+			...EntityAssetsPart
+		}
 	}
 }
 
@@ -185,7 +213,9 @@ query ExerciseDetails($exerciseId: String!) {
 		createdByUserId
 		attributes {
 			instructions
-			images
+			assets {
+				...EntityAssetsPart
+			}
 		}
 	}
 }
@@ -354,22 +384,19 @@ query MetadataGroupDetails($metadataGroupId: String!) {
 			sourceUrl
 			identifier
 			description
-			displayImages
+			assets {
+				...EntityAssetsPart
+			}
 		}
 	}
 }
 
 query MetadataGroupSearch($input: MetadataGroupSearchInput!) {
 	metadataGroupSearch(input: $input) {
+		items
 		details {
 			total
 			nextPage
-		}
-		items {
-			name
-			image
-			parts
-			identifier
 		}
 	}
 }
@@ -389,36 +416,28 @@ query UserMetadataList($input: UserMetadataListInput!) {
 
 query MetadataSearch($input: MetadataSearchInput!) {
 	metadataSearch(input: $input) {
+		items
 		details {
 			total
 			nextPage
-		}
-		items {
-			title
-			image
-			identifier
-			publishYear
 		}
 	}
 }
 
 query PeopleSearch($input: PeopleSearchInput!) {
 	peopleSearch(input: $input) {
+		items
 		details {
 			total
 			nextPage
-		}
-		items {
-			name
-			image
-			birthYear
-			identifier
 		}
 	}
 }
 
 query UserMetadataGroupDetails($metadataGroupId: String!) {
 	userMetadataGroupDetails(metadataGroupId: $metadataGroupId) {
+		hasInteracted
+		averageRating
 		isRecentlyConsumed
 		reviews {
 			...ReviewItemPart
@@ -431,6 +450,8 @@ query UserMetadataGroupDetails($metadataGroupId: String!) {
 
 query UserPersonDetails($personId: String!) {
 	userPersonDetails(personId: $personId) {
+		hasInteracted
+		averageRating
 		isRecentlyConsumed
 		collections {
 			...CollectionPart
@@ -515,5 +536,19 @@ query UserAnalyticsParameters {
 	userAnalyticsParameters {
 		endDate
 		startDate
+	}
+}
+
+query TrendingMetadata {
+	trendingMetadata
+}
+
+query CollectionRecommendations($input: CollectionRecommendationsInput!) {
+	collectionRecommendations(input: $input) {
+		items
+		details {
+			total
+			nextPage
+		}
 	}
 }

@@ -1,18 +1,36 @@
-import { Alert, Container, Group, Stack, Text } from "@mantine/core";
+import {
+	ActionIcon,
+	Alert,
+	Button,
+	Container,
+	Drawer,
+	Group,
+	Skeleton,
+	Stack,
+	Text,
+} from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import {
 	type CalendarEventPartFragment,
 	CollectionContentsDocument,
 	DailyUserActivitiesResponseGroupedBy,
 	DashboardElementLot,
+	ExpireCacheKeyDocument,
 	GraphqlSortOrder,
 	MediaLot,
-	UserAnalyticsDocument,
+	MinimalUserAnalyticsDocument,
+	TrendingMetadataDocument,
 	UserMetadataRecommendationsDocument,
 	type UserPreferences,
 	UserUpcomingCalendarEventsDocument,
 } from "@ryot/generated/graphql/backend/graphql";
 import { isNumber, parseSearchQuery, zodBoolAsString } from "@ryot/ts-utils";
-import { IconInfoCircle, IconPlayerPlay } from "@tabler/icons-react";
+import {
+	IconInfoCircle,
+	IconPlayerPlay,
+	IconRotateClockwise,
+} from "@tabler/icons-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import CryptoJS from "crypto-js";
 import type { ReactNode } from "react";
 import { redirect, useLoaderData } from "react-router";
@@ -25,11 +43,17 @@ import {
 	ApplicationGrid,
 	DisplaySummarySection,
 	ExpireCacheKeyButton,
+	type ExpireCacheKeyButtonProps,
 	ProRequiredAlert,
 } from "~/components/common";
 import { DisplayCollectionEntity } from "~/components/common";
 import { MetadataDisplayItem } from "~/components/media";
-import { dayjsLib } from "~/lib/common";
+import {
+	clientGqlService,
+	dayjsLib,
+	openConfirmationModal,
+	queryFactory,
+} from "~/lib/common";
 import {
 	useCoreDetails,
 	useIsMobile,
@@ -80,7 +104,6 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
 	invariant(foundInProgressCollection);
 	const [
 		{ collectionContents: inProgressCollectionContents },
-		{ userMetadataRecommendations },
 		{ userUpcomingCalendarEvents },
 		{ userAnalytics },
 	] = await Promise.all([
@@ -93,31 +116,29 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
 		}),
 		serverGqlService.authenticatedRequest(
 			request,
-			UserMetadataRecommendationsDocument,
-			{},
-		),
-		serverGqlService.authenticatedRequest(
-			request,
 			UserUpcomingCalendarEventsDocument,
 			{ input: { nextMedia: takeUpcoming } },
 		),
-		serverGqlService.authenticatedRequest(request, UserAnalyticsDocument, {
-			input: {
-				dateRange: {},
-				groupBy: DailyUserActivitiesResponseGroupedBy.AllTime,
+		serverGqlService.authenticatedRequest(
+			request,
+			MinimalUserAnalyticsDocument,
+			{
+				input: {
+					dateRange: {},
+					groupBy: DailyUserActivitiesResponseGroupedBy.AllTime,
+				},
 			},
-		}),
+		),
 	]);
 	return {
 		userAnalytics,
 		userUpcomingCalendarEvents,
-		userMetadataRecommendations,
 		inProgressCollectionContents,
 	};
 };
 
 export const meta = () => {
-	return [{ title: "Home | Ryot" }];
+	return [{ title: "Dashboard | Ryot" }];
 };
 
 export default function Page() {
@@ -184,7 +205,9 @@ export default function Page() {
 							<Section key={v} lot={v}>
 								<SectionTitleWithRefreshIcon
 									text="In Progress"
-									cacheId={loaderData.inProgressCollectionContents.cacheId}
+									action={{
+										cacheId: loaderData.inProgressCollectionContents.cacheId,
+									}}
 								/>
 								{loaderData.inProgressCollectionContents.response.results.items
 									.length > 0 ? (
@@ -206,26 +229,7 @@ export default function Page() {
 						))
 						.with([DashboardElementLot.Recommendations, false], ([v, _]) => (
 							<Section key={v} lot={v}>
-								<SectionTitleWithRefreshIcon
-									text="Recommendations"
-									cacheId={loaderData.userMetadataRecommendations.cacheId}
-									confirmationText="Are you sure you want to refresh the recommendations?"
-								/>
-								{true ? (
-									<ApplicationGrid>
-										{loaderData.userMetadataRecommendations.response.map(
-											(lm) => (
-												<MetadataDisplayItem key={lm} metadataId={lm} />
-											),
-										)}
-									</ApplicationGrid>
-								) : (
-									<ProRequiredAlert tooltipLabel="Get new recommendations every hour" />
-								)}
-								{loaderData.userMetadataRecommendations.response.length ===
-								0 ? (
-									<Text c="dimmed">No recommendations available.</Text>
-								) : null}
+								<RecommendationsSection />
 							</Section>
 						))
 						.with([DashboardElementLot.Summary, false], ([v, _]) => (
@@ -243,6 +247,11 @@ export default function Page() {
 								)}
 							</Section>
 						))
+						.with([DashboardElementLot.Trending, false], ([v, _]) => (
+							<Section key={v} lot={v}>
+								<TrendingSection />
+							</Section>
+						))
 						.otherwise(() => undefined),
 				)}
 			</Stack>
@@ -250,18 +259,154 @@ export default function Page() {
 	);
 }
 
+const RecommendationsSection = () => {
+	const coreDetails = useCoreDetails();
+
+	const recommendations = useQuery({
+		queryKey: queryFactory.media.userMetadataRecommendations().queryKey,
+		queryFn: () =>
+			clientGqlService.request(UserMetadataRecommendationsDocument),
+	});
+
+	const expireCacheKey = useMutation({
+		mutationFn: () =>
+			clientGqlService.request(ExpireCacheKeyDocument, {
+				cacheId:
+					recommendations.data?.userMetadataRecommendations.cacheId ?? "",
+			}),
+	});
+
+	return (
+		<>
+			<Group justify="space-between">
+				<SectionTitle text="Recommendations" />
+				<ActionIcon
+					variant="subtle"
+					onClick={() => {
+						openConfirmationModal(
+							"Are you sure you want to refresh the recommendations?",
+							async () => {
+								await expireCacheKey.mutateAsync();
+								recommendations.refetch();
+							},
+						);
+					}}
+				>
+					<IconRotateClockwise />
+				</ActionIcon>
+			</Group>
+			{recommendations.data ? (
+				coreDetails.isServerKeyValidated ? (
+					recommendations.data.userMetadataRecommendations.response.length >
+					0 ? (
+						<ApplicationGrid>
+							{recommendations.data.userMetadataRecommendations.response.map(
+								(lm) => (
+									<MetadataDisplayItem
+										key={lm}
+										metadataId={lm}
+										shouldHighlightNameIfInteracted
+									/>
+								),
+							)}
+						</ApplicationGrid>
+					) : (
+						<Text c="dimmed">No recommendations available.</Text>
+					)
+				) : (
+					<ProRequiredAlert tooltipLabel="Get new recommendations every hour" />
+				)
+			) : (
+				<Skeleton height={100} />
+			)}
+		</>
+	);
+};
+
+const TrendingSection = () => {
+	const userPreferences = useUserPreferences();
+
+	const [isTrendingMetadataListOpen, { toggle: toggleTrendingMetadataList }] =
+		useDisclosure(false);
+
+	const trendingMetadata = useQuery({
+		queryKey: queryFactory.media.trendingMetadata().queryKey,
+		queryFn: () => clientGqlService.request(TrendingMetadataDocument),
+	});
+
+	const trendingMetadataSelection =
+		trendingMetadata.data?.trendingMetadata.slice(
+			0,
+			userPreferences.general.dashboard.find(
+				(de) => de.section === DashboardElementLot.Trending,
+			)?.numElements || 1,
+		);
+
+	return (
+		<>
+			{isTrendingMetadataListOpen ? (
+				<Drawer
+					size="xl"
+					position="right"
+					title="Trending Media"
+					opened={isTrendingMetadataListOpen}
+					onClose={toggleTrendingMetadataList}
+				>
+					<ApplicationGrid>
+						{trendingMetadata.data?.trendingMetadata.map((lm) => (
+							<MetadataDisplayItem
+								key={lm}
+								metadataId={lm}
+								shouldHighlightNameIfInteracted
+							/>
+						))}
+					</ApplicationGrid>
+				</Drawer>
+			) : null}
+			<Group justify="space-between">
+				<SectionTitle text="Trending" />
+				{trendingMetadata.data &&
+				trendingMetadataSelection &&
+				trendingMetadata.data.trendingMetadata.length >
+					trendingMetadataSelection.length ? (
+					<Button
+						size="xs"
+						variant="subtle"
+						onClick={toggleTrendingMetadataList}
+					>
+						View All
+					</Button>
+				) : null}
+			</Group>
+			{trendingMetadataSelection ? (
+				trendingMetadataSelection.length > 0 ? (
+					<ApplicationGrid>
+						{trendingMetadataSelection.map((lm) => (
+							<MetadataDisplayItem
+								key={lm}
+								metadataId={lm}
+								shouldHighlightNameIfInteracted
+							/>
+						))}
+					</ApplicationGrid>
+				) : (
+					<Text c="dimmed">No trending media available.</Text>
+				)
+			) : (
+				<Skeleton height={100} />
+			)}
+		</>
+	);
+};
+
 const SectionTitleWithRefreshIcon = (props: {
 	text: string;
-	cacheId: string;
-	confirmationText?: string;
+	action: ExpireCacheKeyButtonProps["action"];
 }) => {
 	return (
 		<Group justify="space-between">
 			<SectionTitle text={props.text} />
-			<ExpireCacheKeyButton
-				cacheId={props.cacheId}
-				confirmationText={props.confirmationText}
-			/>
+			<ExpireCacheKeyButton action={props.action} />
 		</Group>
 	);
 };
@@ -278,9 +423,9 @@ const UpComingMedia = ({ um }: { um: CalendarEventPartFragment }) => {
 
 	return (
 		<MetadataDisplayItem
+			noLeftLabel
 			altName={um.metadataText}
 			metadataId={um.metadataId}
-			noLeftLabel
 			rightLabel={`${match(um.metadataLot)
 				.with(
 					MediaLot.Show,

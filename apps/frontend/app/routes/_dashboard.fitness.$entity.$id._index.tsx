@@ -61,6 +61,7 @@ import { z } from "zod";
 import { DisplayCollection, ProRequiredAlert } from "~/components/common";
 import {
 	ExerciseHistory,
+	WorkoutRevisionScheduledAlert,
 	displayDistanceWithUnit,
 	displayWeightWithUnit,
 } from "~/components/fitness";
@@ -80,7 +81,7 @@ import {
 	useUserUnitSystem,
 } from "~/lib/hooks";
 import { duplicateOldWorkout } from "~/lib/state/fitness";
-import { useAddEntityToCollection } from "~/lib/state/media";
+import { useAddEntityToCollections } from "~/lib/state/media";
 import {
 	createToastHeaders,
 	redirectWithToast,
@@ -241,11 +242,14 @@ export default function Page() {
 	);
 	const [isWorkoutLoading, setIsWorkoutLoading] = useState(false);
 	const startWorkout = useGetWorkoutStarter();
-	const [_a, setAddEntityToCollectionData] = useAddEntityToCollection();
+	const [_a, setAddEntityToCollectionsData] = useAddEntityToCollections();
 	const entityLot = match(loaderData.entity)
 		.with(FitnessEntity.Workouts, () => EntityLot.Workout)
 		.with(FitnessEntity.Templates, () => EntityLot.WorkoutTemplate)
 		.exhaustive();
+	const images = loaderData.information.assets?.s3Images || [];
+	const videos = loaderData.information.assets?.s3Videos || [];
+	const hasAssets = images.length > 0 || videos.length > 0;
 
 	const performDecision = async (params: {
 		action: FitnessAction;
@@ -260,8 +264,6 @@ export default function Page() {
 			params.action,
 			loaderData.caloriesBurnt ? Number(loaderData.caloriesBurnt) : undefined,
 			loaderData.information,
-			coreDetails,
-			userPreferences.fitness,
 			params,
 		);
 		startWorkout(workout, params.action);
@@ -311,6 +313,7 @@ export default function Page() {
 			) : null}
 			<Container size="xs">
 				<Stack>
+					<WorkoutRevisionScheduledAlert />
 					<Group justify="space-between" wrap="nowrap">
 						<Title>{loaderData.entityName}</Title>
 						<Menu shadow="md" position="bottom-end">
@@ -399,7 +402,7 @@ export default function Page() {
 									.exhaustive()}
 								<Menu.Item
 									onClick={() =>
-										setAddEntityToCollectionData({
+										setAddEntityToCollectionsData({
 											entityLot,
 											entityId: loaderData.entityId,
 											alreadyInCollections: loaderData.collections.map(
@@ -609,12 +612,16 @@ export default function Page() {
 							<Text span>{loaderData.information.comment}</Text>
 						</Box>
 					) : null}
-					{loaderData.information.assets &&
-					loaderData.information.assets.images.length > 0 ? (
+					{hasAssets ? (
 						<Avatar.Group>
-							{loaderData.information.assets.images.map((i) => (
+							{images.map((i) => (
 								<Anchor key={i} href={i} target="_blank">
 									<Avatar src={i} />
+								</Anchor>
+							))}
+							{videos.map((v) => (
+								<Anchor key={v} href={v} target="_blank">
+									<Avatar name="Video" />
 								</Anchor>
 							))}
 						</Avatar.Group>
@@ -646,7 +653,7 @@ const ConsumedMetadataDisplay = (props: {
 	return (
 		<Link to={$path("/media/item/:id", { id: props.metadataId })} ref={ref}>
 			<Tooltip label={metadataDetails?.title}>
-				<Avatar src={metadataDetails?.image} />
+				<Avatar src={metadataDetails?.assets.remoteImages.at(0)} />
 			</Tooltip>
 		</Link>
 	);

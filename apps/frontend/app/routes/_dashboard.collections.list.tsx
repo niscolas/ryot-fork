@@ -38,7 +38,6 @@ import {
 import {
 	changeCase,
 	getActionIntent,
-	isString,
 	processSubmission,
 	truncate,
 	zodCheckboxAsString,
@@ -260,7 +259,7 @@ export default function Page() {
 						</Modal>
 					</Flex>
 					<ExpireCacheKeyButton
-						cacheId={loaderData.userCollectionsList.cacheId}
+						action={{ cacheId: loaderData.userCollectionsList.cacheId }}
 					/>
 				</Group>
 				<Group wrap="nowrap">
@@ -336,10 +335,10 @@ const DisplayCollection = (props: {
 			for (const content of collectionContents.response.results.items) {
 				if (images.length === 5) break;
 				if (content.entityLot !== EntityLot.Metadata) continue;
-				const { image } = await queryClient.ensureQueryData(
+				const { assets } = await queryClient.ensureQueryData(
 					getPartialMetadataDetailsQuery(content.entityId),
 				);
-				if (isString(image)) images.push(image);
+				if (assets.remoteImages.length > 0) images.push(assets.remoteImages[0]);
 			}
 			return images;
 		},
@@ -691,7 +690,7 @@ const CreateOrUpdateModal = (props: {
 					value={props.toUpdateCollection?.id}
 					name={props.toUpdateCollection ? "updateId" : undefined}
 				>
-					{props.toUpdateCollection ? "Update" : "Create"}
+					{props.toUpdateCollection?.id ? "Update" : "Create"}
 				</Button>
 			</Stack>
 		</Box>
